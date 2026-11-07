@@ -1,0 +1,24 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+    GetCurrentProcessId@0
+    GetCurrentThreadId@0
+    GetTickCount@0
+    GetModuleHandleExA@12
+    GetLastError@0
+    InitializeCriticalSection@4
+    EnterCriticalSection@4
+    LeaveCriticalSection@4
+    CreateThread@24
+    CloseHandle@4
+    CreateNamedPipeA@32
+    ConnectNamedPipe@8
+    DisconnectNamedPipe@4
+    ReadFile@20
+    WriteFile@20
+    PeekNamedPipe@24
+    CreateEventA@16
+    ResetEvent@4
+    WaitForSingleObject@8
+    GetOverlappedResult@16
+    CancelIoEx@8
+    Sleep@4

@@ -1,0 +1,169 @@
+using R10.Bridge.Client;
+using R10.Core;
+
+namespace R10.Bridge.Runtime;
+
+/// <summary>Explicit bridge mode. It never falls back to process-memory writes.</summary>
+public sealed class BridgeTrainerRuntime : ITrainerRuntime
+{
+    private readonly IBridgeClient _client;
+    private readonly SemaphoreSlim _gate = new(1);
+    private readonly CancellationTokenSource _stop = new();
+    private readonly object _startGate = new();
+    private Task? _loop;
+    private BridgeState? _observed;
+    private string? _ownedSession;
+    private readonly HashSet<FeatureId> _owned = [];
+    private bool _closed;
+    private int _closeRequests;
+    private TrainerSnapshot _current = TrainerSnapshot.Empty with { RuntimeMode = "bridge" };
+    public TrainerSnapshot Current => Volatile.Read(ref _current);
+    public event Action<TrainerSnapshot>? SnapshotChanged;
+
+    public BridgeTrainerRuntime(string gameDirectory) : this(new DiscoveringBridgeClient(gameDirectory)) { }
+    public BridgeTrainerRuntime(IBridgeClient client) => _client=client;
+    public Task StartAsync() { lock (_startGate) { if (!_closed) _loop ??= Task.Run(PollAsync); } return Task.CompletedTask; }
+    public Task<OperationResult> SetValueAsync(FeatureId id,decimal value) => Task.FromResult(OperationResult.Fail("桥接模式暂未接入此数值功能。"));
+    public Task<OperationResult> SetLockAsync(FeatureId id,bool enabled) => Task.FromResult(OperationResult.Fail("桥接模式暂未接入锁定功能。"));
+
+    public async Task<OperationResult> SetToggleAsync(FeatureId id,bool enabled)
+    {
+        if (id is not (FeatureId.Hp or FeatureId.NoDuplicateCards)) return OperationResult.Fail("此功能未接入游戏组件。");
+        if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在确认桥接关闭，请稍后再操作。");
+        await _gate.WaitAsync().ConfigureAwait(false);
+        bool previouslyOwned=_owned.Contains(id);
+        string? previousSession=_ownedSession;
+        try
+        {
+            if (_closed) return OperationResult.Fail("连接已关闭。");
+            if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在确认桥接关闭，请稍后再操作。");
+            var state=await _client.GetStateAsync().ConfigureAwait(false);
+            if (_ownedSession is not null && _ownedSession!=state.Session) { _owned.Clear(); _ownedSession=null; previouslyOwned=false; previousSession=null; }
+            if (!CanWrite(state, id)) return OperationResult.Fail("游戏组件尚未就绪，或当前版本不支持此功能。");
+            if (enabled) { _owned.Add(id); _ownedSession=state.Session; }
+            var command=await ChangeFeatureAsync(state,id,enabled).ConfigureAwait(false);
+            if (command.State=="rejected" && enabled) { if (previouslyOwned) _owned.Add(id); else _owned.Remove(id); _ownedSession=previousSession; }
+            if (command.State=="applied" && !enabled) { _owned.Remove(id); if (_owned.Count==0) _ownedSession=null; }
+            try { await RefreshAsync().ConfigureAwait(false); }
+            catch (BridgeException error) { PublishError(error); } // The command result remains known even if the following snapshot fails.
+            return CommandResult(command);
+        }
+        catch (BridgeException error)
+        {
+            if (enabled && !error.OutcomeUnknown) { if (previouslyOwned) _owned.Add(id); else _owned.Remove(id); _ownedSession=previousSession; }
+            PublishError(error);
+            return OperationResult.Fail(error.OutcomeUnknown ? "命令结果未知，保留关闭责任，请检查当前状态后再操作。" : error.Message);
+        }
+        finally { _gate.Release(); }
+    }
+    public async Task<OperationResult> TryCloseAsync()
+    {
+        Interlocked.Increment(ref _closeRequests);
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_closed) return OperationResult.Ok;
+            foreach (var id in _owned.ToArray())
+            {
+                try
+                {
+                    var state=await _client.GetStateAsync().ConfigureAwait(false);
+                    if (state.Session==_ownedSession)
+                    {
+                        var result=CommandResult(await ChangeFeatureAsync(state,id,false).ConfigureAwait(false));
+                        if (!result.Success) return result;
+                    }
+                    _owned.Remove(id);
+                    // A changed/exited process cannot retain the old DLL's toggle.
+                }
+                catch (BridgeException error) when (error.Code is "game_not_running" or "session_changed") { }
+                catch (BridgeException error) { PublishError(error); return OperationResult.Fail("尚未确认组件功能关闭："+error.Message); }
+            }
+            _closed=true; await _stop.CancelAsync().ConfigureAwait(false);
+            Publish(new(ConnectionState.Closed,"桥接已关闭",null,_client.IsSimulation,EmptyFeatures(),RuntimeMode:"bridge"));
+            return OperationResult.Ok;
+        }
+        finally { _gate.Release(); Interlocked.Decrement(ref _closeRequests); }
+    }
+    private async Task<BridgeCommand> ChangeFeatureAsync(BridgeState state,FeatureId id,bool enabled)
+    {
+        if (state.Session is null) throw new BridgeException("session_required","桥接未提供进程会话标识。");
+        var command=await _client.SetFeatureForSessionAsync(state.Session,id==FeatureId.Hp ? "hp_guard" : "no_duplicate_cards",enabled,state.LoadGeneration).ConfigureAwait(false);
+        using var deadline=new CancellationTokenSource(TimeSpan.FromMilliseconds(2500));
+        try
+        {
+            while (!command.IsTerminal)
+            {
+                await Task.Delay(25,deadline.Token).ConfigureAwait(false);
+                command=await _client.GetCommandResultForSessionAsync(state.Session,command.Id,deadline.Token).ConfigureAwait(false);
+            }
+            return command;
+        }
+        catch (Exception error) when (error is BridgeException or OperationCanceledException)
+        {
+            throw new BridgeException("command_result_unknown",$"命令 {command.Id} 已提交，但尚未确认最终结果。",true,error);
+        }
+    }
+    private static OperationResult CommandResult(BridgeCommand command) => command.State=="applied" ? OperationResult.Ok : OperationResult.Fail(command.State=="queued"
+            ? $"命令 {command.Id} 仍在等待游戏线程处理。" : command.Error ?? "游戏状态变化，命令已拒绝。");
+    private async Task PollAsync()
+    {
+        try
+        {
+            while (!_stop.IsCancellationRequested)
+            {
+                await _gate.WaitAsync(_stop.Token).ConfigureAwait(false);
+                try { await RefreshAsync().ConfigureAwait(false); }
+                catch (BridgeException error) { PublishError(error); }
+                catch (Exception error)
+                {
+                    // A transient discovery/client failure must not leave a stale Ready snapshot forever.
+                    PublishError(new BridgeException("runtime_error","桥接轮询异常："+error.Message,inner:error));
+                }
+                finally { _gate.Release(); }
+                await Task.Delay(250,_stop.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+    }
+    private async Task RefreshAsync()
+    {
+        var state=await _client.GetStateAsync(_stop.Token).ConfigureAwait(false);
+        if (_ownedSession is not null && _ownedSession!=state.Session) { _owned.Clear(); _ownedSession=null; }
+        _observed=state;
+        var features=EmptyFeatures();
+        bool ready=CanWrite(state);
+        string hp=state.PlayerHp is { } value ? $"我方 HP {value} / {state.PlayerHpMax?.ToString() ?? "?"}" : "当前没有战斗 HP 快照";
+        features[FeatureId.Hp]=new(Requested:state.HpGuard,Active:state.HpGuard && ready,CanEdit:ready,
+            Detail:$"{hp}；已拦截 {state.BlockedHits?.ToString() ?? "?"} 次伤害。",
+            Help:"在已接入的战斗伤害结算点保护我方 HP。保留治疗、初始化与结果结算；不主动补满血量。",
+            ActiveDescription:"游戏线程已应用保护开关；具体伤害路径的验证范围见说明。");
+        bool cardsReady=CanWrite(state,FeatureId.NoDuplicateCards);
+        features[FeatureId.NoDuplicateCards]=new(Requested:state.NoDuplicateCards,Active:state.NoDuplicateCards && cardsReady,CanEdit:cardsReady,
+            Detail:cardsReady ? $"已排除 {state.FilteredCards ?? 0} 个候选；餐券补位 {state.FallbackCards ?? 0} 次。下一批奖励生效。" : "请安装新版游戏组件并重新启动游戏。",
+            Help:FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help,ActiveDescription:"游戏线程已应用开关；固定奖励和消耗型奖励保留原规则。");
+        var connection=state.Phase!=1 ? ConnectionState.Loading : state.HeartbeatAgeMs is null or <0 or >2000 ? ConnectionState.Error : ready || cardsReady ? ConnectionState.Ready : ConnectionState.Unsupported;
+        Publish(new(connection,$"桥接 · PID {state.Pid} · 读档 {state.LoadGeneration}",state.Pid,_client.IsSimulation,features,
+            connection==ConnectionState.Error ? "游戏线程心跳未知或暂停，已停用操作。" : connection==ConnectionState.Unsupported ? "当前脚本尚未提供兼容的组件功能入口。" : null,"bridge",
+            "组件提供 HP 保护、随机掉落去重与状态读取。"));
+    }
+    private static bool CanWrite(BridgeState state,FeatureId id=FeatureId.Hp) => state.Phase==1 && state.ScriptVersion==1 && (state.Capabilities.GetValueOrDefault() & (id==FeatureId.Hp ? 4 : 32))!=0 && state.HeartbeatAgeMs is >=0 and <=2000;
+    private static Dictionary<FeatureId,FeatureObservation> EmptyFeatures() => FeatureCatalog.All.ToDictionary(x=>x.Id,_=>new FeatureObservation(Detail:"此功能尚未接入桥接模式。"));
+    private void PublishError(BridgeException error)
+    {
+        var connection=error.Code=="game_not_running" ? ConnectionState.Searching : ConnectionState.Error;
+        Publish(new(connection,"等待游戏副本桥接",_observed?.Pid,_client.IsSimulation,EmptyFeatures(),error.Message,"bridge",
+            "请运行配置的游戏副本；桥接模式不会回退到外部内存写入。"));
+    }
+    private void Publish(TrainerSnapshot snapshot)
+    {
+        Volatile.Write(ref _current,snapshot);
+        var observers=SnapshotChanged;
+        if (observers is null) return;
+        foreach (Action<TrainerSnapshot> observer in observers.GetInvocationList())
+        {
+            try { observer(snapshot); }
+            catch (Exception error) { System.Diagnostics.Trace.TraceError("Bridge snapshot observer failed: {0}",error); }
+        }
+    }
+}

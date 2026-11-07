@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
+    <PlatformTarget>x86</PlatformTarget>
+    <SelfContained>true</SelfContained>
+    <AssemblyName>R10Trainer</AssemblyName>
+    <RootNamespace>R10.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.4.0</Version>
+    <Description>兰斯 10 独立修改器</Description>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../R10.Core/R10.Core.csproj" /><ProjectReference Include="../R10.Bridge.Runtime/R10.Bridge.Runtime.csproj" /><ProjectReference Include="../R10.Bridge.Install/R10.Bridge.Install.csproj" /></ItemGroup>
+</Project>

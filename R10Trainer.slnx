@@ -1,0 +1,4 @@
+<Solution>
+  <Folder Name="/src/"><Project Path="src/R10.Core/R10.Core.csproj" /><Project Path="src/R10.App/R10.App.csproj" /><Project Path="src/R10.Bridge.Client/R10.Bridge.Client.csproj" /><Project Path="src/R10.Bridge.Runtime/R10.Bridge.Runtime.csproj" /><Project Path="src/R10.Bridge.Install/R10.Bridge.Install.csproj" /><Project Path="src/R10.Mcp/R10.Mcp.csproj" /></Folder>
+  <Folder Name="/tests/"><Project Path="tests/R10.Tests/R10.Tests.csproj" /><Project Path="tests/R10.Bridge.Tests/R10.Bridge.Tests.csproj" /><Project Path="tests/R10.NativeBridge.Tests/R10.NativeBridge.Tests.csproj" /><Project Path="tests/R10.Install.Tests/R10.Install.Tests.csproj" /></Folder>
+</Solution>

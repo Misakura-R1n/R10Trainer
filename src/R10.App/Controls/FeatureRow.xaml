@@ -1,0 +1,29 @@
+<UserControl x:Class="R10.App.Controls.FeatureRow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" MinHeight="54" AutomationProperties.AutomationId="{Binding Id, StringFormat=Feature.{0}}">
+  <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="0,11">
+    <StackPanel>
+      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="{Binding Label}" FontSize="12" VerticalAlignment="Center"/>
+            <Button Style="{StaticResource GhostButton}" Width="21" MinHeight="24" Padding="3" Margin="3,0,0,0" Visibility="{Binding HasHelp,Converter={StaticResource BoolVisibility}}" Command="{Binding HelpCommand}" AutomationProperties.AutomationId="{Binding Id,StringFormat=Help.{0}}" AutomationProperties.Name="{Binding Label,StringFormat={}{0}说明}"><TextBlock Style="{StaticResource Icon}" FontSize="12" Foreground="{DynamicResource MutedBrush}" Text="&#xE946;"/></Button>
+          </StackPanel>
+          <TextBlock Text="{Binding StateText}" Style="{StaticResource MutedText}" FontSize="11" Margin="0,2,0,0" Visibility="{Binding HasState,Converter={StaticResource BoolVisibility}}" ToolTip="{Binding StateDescription}"/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <ToggleButton Style="{StaticResource Switch}" IsChecked="{Binding Requested,Mode=OneWay}" Command="{Binding ToggleCommand}" IsEnabled="{Binding CanToggle}" Visibility="{Binding IsToggle,Converter={StaticResource BoolVisibility}}" AutomationProperties.Name="{Binding Label}" AutomationProperties.AutomationId="{Binding Id,StringFormat=Toggle.{0}}"/>
+          <Border Background="{DynamicResource ControlBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="6" Visibility="{Binding IsNumber,Converter={StaticResource BoolVisibility}}">
+            <StackPanel Orientation="Horizontal">
+              <TextBox x:Name="NumberInput" Width="68" MinHeight="28" Text="{Binding Draft,UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEdit}" TextAlignment="Right" ToolTip="{Binding ValueDescription}" GotKeyboardFocus="NumberGotFocus" LostKeyboardFocus="NumberLostFocus" PreviewKeyDown="NumberKeyDown" AutomationProperties.Name="{Binding Label}" AutomationProperties.AutomationId="{Binding Id,StringFormat=Value.{0}}"/>
+              <TextBlock Text="{Binding Unit}" Style="{StaticResource MutedText}" FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0" Visibility="{Binding Unit,Converter={StaticResource TextVisibility}}"/>
+              <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,0,0,0"><Button Style="{StaticResource GhostButton}" Width="26" MinHeight="28" Padding="4" Command="{Binding ApplyCommand}" ToolTip="应用数值（Enter）" AutomationProperties.Name="{Binding Label,StringFormat=应用{0}}" AutomationProperties.AutomationId="{Binding Id,StringFormat=Apply.{0}}"><TextBlock Text="↵" FontSize="14" Foreground="{DynamicResource MutedBrush}"/></Button></Border>
+            </StackPanel>
+          </Border>
+          <StackPanel Orientation="Horizontal" Visibility="{Binding IsChoice,Converter={StaticResource BoolVisibility}}"><ComboBox Width="69" ItemsSource="{Binding StarChoices}" SelectedItem="{Binding StarTarget}" IsEnabled="{Binding CanEdit}" AutomationProperties.AutomationId="StarTarget" AutomationProperties.Name="角色星级目标"/><Button Content="应用" Command="{Binding ApplyCommand}" Margin="6,0,0,0" FontSize="12" AutomationProperties.AutomationId="Apply.Star" AutomationProperties.Name="应用角色星级"/></StackPanel>
+          <ToggleButton Style="{StaticResource LockButton}" IsChecked="{Binding LockRequested,Mode=OneWay}" Command="{Binding LockCommand}" IsEnabled="{Binding CanLock}" Margin="5,0,0,0" Visibility="{Binding HasLock,Converter={StaticResource BoolVisibility}}" ToolTip="锁定当前值；再次点击解除锁定" AutomationProperties.AutomationId="{Binding Id,StringFormat=Lock.{0}}" AutomationProperties.Name="{Binding Label,StringFormat=锁定{0}}"><TextBlock Style="{StaticResource Icon}" FontSize="14" Text="{Binding LockGlyph}"/></ToggleButton>
+        </StackPanel>
+      </Grid>
+      <TextBlock Text="{Binding Help}" Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" Visibility="{Binding HelpOpen,Converter={StaticResource BoolVisibility}}"/>
+      <TextBlock Text="{Binding Error}" Foreground="{DynamicResource ErrorBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="{Binding HasError,Converter={StaticResource BoolVisibility}}" AutomationProperties.LiveSetting="Polite"/>
+    </StackPanel>
+  </Border>
+</UserControl>
