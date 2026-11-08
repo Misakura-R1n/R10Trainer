@@ -65,9 +65,8 @@ public sealed class BridgeInstaller
             var states=GetOwnedStates(directory,manifest);
             bool installed=states.All(x=>x.Installed);
             // Restore uses the journal, so an old or missing package cannot strand recovery.
-            string packageDll=Path.Combine(_package,"bridge","R10Bridge.dll");
-            if (installed && File.Exists(packageDll) && !AinPatch.Same(HashFile(packageDll),HashFile(Path.Combine(directory,"R10Bridge.dll"))))
-                return new(BridgeInstallState.RecoveryRequired,running ?? "已安装旧版组件。请先恢复游戏文件，再安装新版组件。",false,stopped,false);
+            if (installed && !MatchesCurrentComponent(directory))
+                return new(BridgeInstallState.RecoveryRequired,running ?? "已安装组件与当前版本不一致，或组件安装包不完整。请先恢复游戏文件，再安装新版组件。",false,stopped,false);
             return new(installed ? BridgeInstallState.Installed : BridgeInstallState.RecoveryRequired,
                 installed ? running ?? "游戏组件已安装，可启动游戏并使用组件功能。" : running ?? "检测到未完成的组件操作，请先恢复原版再重新安装。",
                 false,stopped,installed);
@@ -93,7 +92,10 @@ public sealed class BridgeInstaller
         if (Directory.Exists(journal))
         {
             var existing=ReadManifest(journal); ValidateBackups(journal,existing);
-            if (GetOwnedStates(directory,existing).All(x=>x.Installed)) return new(BridgeInstallState.Installed,"游戏组件已经安装。",false,true,true);
+            if (GetOwnedStates(directory,existing).All(x=>x.Installed))
+                return MatchesCurrentComponent(directory)
+                    ? new(BridgeInstallState.Installed,"游戏组件已经安装。",false,true,true)
+                    : new(BridgeInstallState.RecoveryRequired,"已安装组件与当前版本不一致，或组件安装包不完整。请先恢复游戏文件，再安装新版组件。",false,true,false);
             throw new IOException("上次组件操作尚未完成，请先恢复原版。");
         }
         if (File.Exists(journal)) throw new IOException("备份目录名称被文件占用。");
@@ -181,6 +183,17 @@ public sealed class BridgeInstaller
         if (File.Exists(target)) File.Replace(temporary,target,null);
         else File.Move(temporary,target);
         if (!AinPatch.Same(HashFile(target),expected)) throw new IOException("替换后的文件校验失败。");
+    }
+
+    private bool MatchesCurrentComponent(string directory)
+    {
+        // The journal proves ownership, not currency. Compare the installed script against
+        // this app's supported plain identity, independent of compression or old backup hashes.
+        // Do not require a readable patch recipe to offer restoration of an owned installation.
+        var ain=ReadBounded(Path.Combine(directory,"Rance10.ain"),64*1024*1024);
+        if (!AinPatch.Same(AinPatch.Hash(AinPatch.Decode(ain)),_profile.TargetPlainHash)) return false;
+        string packageDll=Path.Combine(_package,"bridge","R10Bridge.dll");
+        return File.Exists(packageDll) && AinPatch.Same(HashFile(packageDll),HashFile(Path.Combine(directory,"R10Bridge.dll")));
     }
 
     private (PatchRecipe Patch,byte[] Dll) ReadPackage()

@@ -51,6 +51,32 @@ await Test("install again after restore builds fresh backup for current INI",asy
     await installer.InstallAsync(f.Game); await installer.RestoreAsync(f.Game);
     Check(configured.SequenceEqual(File.ReadAllBytes(f.File("AliceStart.ini"))),"user setting lost");
 });
+await Test("AIN-only upgrade with unchanged DLL is detected and restores before reinstall",async()=>
+{
+    using var f=new Fixture(); await f.Installer().InstallAsync(f.Game);
+    var oldAin=File.ReadAllBytes(f.File("Rance10.ain"));
+    var sourcePlain=AinPatch.Decode(f.Ain); var addition=Encoding.ASCII.GetBytes("authored-hook-v2");
+    var target=sourcePlain.Concat(addition).ToArray();
+    var profile=f.Profile with { TargetPlainHash=AinPatch.Hash(target) };
+    var recipe=new PatchRecipe(1,profile.SourceHash,AinPatch.Hash(sourcePlain),profile.TargetPlainHash,sourcePlain.Length,target.Length,
+        profile.ExeHash,AinPatch.Hash(f.Dll),[new(sourcePlain.Length,0,AinPatch.Hash([]),Convert.ToBase64String(addition))]);
+    File.WriteAllBytes(f.PatchPath,JsonSerializer.SerializeToUtf8Bytes(recipe,AinPatch.Json));
+    var newer=new BridgeInstaller(f.Package,profile);
+    var status=await newer.InspectAsync(f.Game);
+    Check(status.State==BridgeInstallState.RecoveryRequired && status.CanRestore && !status.IsInstalled && !status.CanInstall,"AIN-only upgrade reported current");
+    Check(!(await newer.InstallAsync(f.Game)).IsInstalled,"direct install mislabeled old AIN as current");
+    Check(File.ReadAllBytes(f.File("Rance10.ain")).SequenceEqual(oldAin),"old install overwritten without restoration");
+    // A missing/corrupt new recipe must not strand recovery of a known owned old installation.
+    File.WriteAllText(f.PatchPath,"corrupt recipe");
+    Check((await newer.InspectAsync(f.Game)).CanRestore,"corrupt recipe blocked old-version recovery");
+    File.Delete(f.PatchPath);
+    Check((await newer.InspectAsync(f.Game)).CanRestore,"missing recipe blocked old-version recovery");
+    await newer.RestoreAsync(f.Game); f.AssertOriginal();
+    File.WriteAllBytes(f.PatchPath,JsonSerializer.SerializeToUtf8Bytes(recipe,AinPatch.Json));
+    Check((await newer.InstallAsync(f.Game)).IsInstalled && (await newer.InspectAsync(f.Game)).IsInstalled,"new script not recognized after reinstall");
+    Check(AinPatch.Hash(AinPatch.Decode(File.ReadAllBytes(f.File("Rance10.ain"))))==profile.TargetPlainHash,"wrong installed script");
+    await newer.RestoreAsync(f.Game); f.AssertOriginal();
+});
 await Test("unknown DLL is never replaced",async()=>
 {
     using var f=new Fixture(); var unknown=Encoding.ASCII.GetBytes("other owner"); File.WriteAllBytes(f.File("R10Bridge.dll"),unknown);
