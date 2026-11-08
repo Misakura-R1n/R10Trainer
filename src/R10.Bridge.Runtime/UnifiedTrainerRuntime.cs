@@ -8,7 +8,7 @@ using R10.Core.Memory;
 namespace R10.Bridge.Runtime;
 
 /// <summary>The desktop product's runtime. HP is always a game-thread bridge operation.
-/// Other features retain their existing memory implementation in the same selected game.</summary>
+/// Component features never fall back to external writes; other features retain their memory implementation.</summary>
 public sealed class UnifiedTrainerRuntime : ITrainerRuntime
 {
     public const string HpHelp = "在已接入的战斗伤害结算点保护我方 HP。保留治疗、初始化与结果结算；不主动补满血量。首次使用请安装游戏组件并重新启动游戏。";
@@ -102,9 +102,9 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
             var memory = pair.Memory.Current;
             var bridge = pair.Bridge.Current;
             if (DifferentProcesses(memory, bridge)) return OperationResult.Fail("游戏进程发生变化，请等待重新连接。");
-            if (BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id))
+            if (BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id) || BridgeTrainerRuntime.ValueFeatures.ContainsKey(id))
             {
-                if (!toggle) return OperationResult.Fail("此组件功能仅提供开关操作。");
+                if (toggle != BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id)) return OperationResult.Fail("此组件功能不支持该操作。");
                 if (!ComponentReady(memory, bridge) || bridge.Features.GetValueOrDefault(id)?.CanEdit != true) return OperationResult.Fail("组件功能尚未就绪，请安装新版组件并启动所选游戏。");
                 return await action(pair.Bridge).ConfigureAwait(false);
             }
@@ -216,7 +216,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
                 var cards = bridge.Features.GetValueOrDefault(FeatureId.NoDuplicateCards) ?? new();
                 features[FeatureId.NoDuplicateCards] = cards with { CanEdit=ready && !_recovering && cards.CanEdit,
                     Active=ready && !_recovering && cards.Active, Help=FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help };
-                foreach (var id in new[] { FeatureId.Redraw, FeatureId.Redistribute })
+                foreach (var id in new[] { FeatureId.Redraw, FeatureId.Redistribute, FeatureId.Resources }.Concat(BridgeTrainerRuntime.ValueFeatures.Keys))
                 {
                     var item=bridge.Features.GetValueOrDefault(id) ?? new();
                     features[id]=item with { CanEdit=ready && !_recovering && item.CanEdit,

@@ -13,6 +13,7 @@ typedef struct {
     LONG pendingId, nextId;
     LONG noDuplicateCards, cardBatch, cardBatchEnabled, filteredCards, fallbackCards;
     LONG foodRedraw, autoRedistribute;
+    LONG resourcesFull, dataReady, food, medal, friendship, unit;
     LONG selector, controlEnabled, battleReady; DWORD battleTick;
     Command commands[HISTORY];
 } State;
@@ -37,7 +38,8 @@ static char *unsignedNumber(char *p, DWORD value) {
 static int equal(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; } return *a == *b;
 }
-static LONG capability(LONG kind) { return kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : 16; }
+static LONG capability(LONG kind) { return kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : kind==8 || kind==9 ? 256 : 16; }
+static LONG dataFeature(const char *name) { return equal(name,"food") ? 1 : equal(name,"medal") ? 2 : equal(name,"friendship") ? 3 : equal(name,"unit") ? 4 : equal(name,"star") ? 5 : 0; }
 static void copy(void *to, const void *from, unsigned n) {
     unsigned char *d = to; const unsigned char *s = from; while (n--) *d++ = *s++;
 }
@@ -51,7 +53,7 @@ static void errorResponse(char *out, const char *error) {
 }
 
 /* Strict bounded flat JSON: protocol fields are ASCII strings, booleans, integers. */
-typedef struct { char op[32], feature[32]; LONG enabled, generation, id, action, argument, argument2; unsigned present; } Request;
+typedef struct { char op[32], feature[32]; LONG enabled, generation, id, action, argument, argument2, value; unsigned present; } Request;
 static void whitespace(const char **s) { while (**s == ' ' || **s == '\t' || **s == '\r' || **s == '\n') ++*s; }
 static int string(const char **s, char *dest, unsigned capacity) {
     unsigned n = 0; if (*(*s)++ != '"') return 0;
@@ -84,14 +86,14 @@ static int parse(const char *s, Request *r) {
         char key[32]; unsigned mask; whitespace(&s);
         if (!string(&s,key,sizeof(key))) return 0;
         whitespace(&s); if (*s++ != ':') return 0; whitespace(&s);
-        mask = equal(key,"op") ? 1 : equal(key,"feature") ? 2 : equal(key,"enabled") ? 4 : equal(key,"generation") ? 8 : equal(key,"id") ? 16 : equal(key,"action") ? 32 : equal(key,"argument") ? 64 : equal(key,"argument2") ? 128 : 0;
+        mask = equal(key,"op") ? 1 : equal(key,"feature") ? 2 : equal(key,"enabled") ? 4 : equal(key,"generation") ? 8 : equal(key,"id") ? 16 : equal(key,"action") ? 32 : equal(key,"argument") ? 64 : equal(key,"argument2") ? 128 : equal(key,"value") ? 256 : 0;
         if (!mask || r->present & mask) return 0; r->present |= mask;
         if (mask == 1 || mask == 2) { if (!string(&s,mask == 1 ? r->op : r->feature,32)) return 0; }
         else if (mask == 4) {
             if (literal(&s,"true")) r->enabled=1;
             else if (literal(&s,"false")) r->enabled=0;
             else return 0;
-        } else if (!integer(&s,mask == 8 ? &r->generation : mask == 16 ? &r->id : mask == 32 ? &r->action : mask == 64 ? &r->argument : &r->argument2)) return 0;
+        } else if (!integer(&s,mask == 8 ? &r->generation : mask == 16 ? &r->id : mask == 32 ? &r->action : mask == 64 ? &r->argument : mask == 256 ? &r->value : &r->argument2)) return 0;
         whitespace(&s); if (*s == '}') { s++; break; } if (*s++ != ',') return 0;
     }
     whitespace(&s); return !*s && (r->present & 1);
@@ -99,9 +101,14 @@ static int parse(const char *s, Request *r) {
 static void respond(const char *input, char *out) {
     Request r; State snapshot; char *p; LONG id;
     if (!parse(input,&r)) { errorResponse(out,"invalid_request"); return; }
-    if (equal(r.op,"set_feature") || equal(r.op,"action")) {
-        LONG kind=equal(r.op,"action") ? r.action : equal(r.feature,"no_duplicate_cards") ? 5 : equal(r.feature,"food_redraw") ? 6 : equal(r.feature,"auto_redistribute") ? 7 : equal(r.feature,"hp_guard") ? 1 : 0;
-        if (!equal(r.op,"action") && (r.present != 15 || !kind)) { errorResponse(out,"unsupported_feature"); return; }
+    if (equal(r.op,"set_feature") || equal(r.op,"action") || equal(r.op,"set_value")) {
+        LONG kind=equal(r.op,"set_value") ? 8 : equal(r.op,"action") ? r.action : equal(r.feature,"resources_full") ? 9 : equal(r.feature,"no_duplicate_cards") ? 5 : equal(r.feature,"food_redraw") ? 6 : equal(r.feature,"auto_redistribute") ? 7 : equal(r.feature,"hp_guard") ? 1 : 0;
+        if (equal(r.op,"set_feature") && (r.present != 15 || !kind)) { errorResponse(out,"unsupported_feature"); return; }
+        if (kind==8) {
+            r.argument=dataFeature(r.feature); r.argument2=r.value;
+            if (r.present!=267 || !r.argument || (r.argument<=3 && r.value>3) || (r.argument==4 && r.value>999) ||
+                (r.argument==5 && r.value!=10 && r.value!=40 && r.value!=80 && r.value!=200)) { errorResponse(out,"invalid_value"); return; }
+        }
         if (equal(r.op,"action") && (r.present != 233 || kind<2 || kind>4 ||
             (kind==2 && (r.argument>9998 || r.argument2)) ||
             (kind==3 && (r.argument || r.argument2)) || (kind==4 && (r.argument>6 || r.argument2>1)))) { errorResponse(out,"invalid_action"); return; }
@@ -109,6 +116,8 @@ static void respond(const char *input, char *out) {
         if (state.scriptVersion!=1 || !(state.capabilities & capability(kind))) { LeaveCriticalSection(&gate); errorResponse(out,"script_hook_unavailable"); return; }
         if (r.generation != state.generation) { LeaveCriticalSection(&gate); errorResponse(out,"generation_mismatch"); return; }
         if (state.phase != 1 || GetTickCount()-state.lastTick > 2000) { LeaveCriticalSection(&gate); errorResponse(out,"game_not_ready"); return; }
+        if ((kind==8 || (kind==9 && r.enabled)) && !state.dataReady) { LeaveCriticalSection(&gate); errorResponse(out,"data_not_ready"); return; }
+        if (kind==8 && r.argument<=3 && state.resourcesFull) { LeaveCriticalSection(&gate); errorResponse(out,"resources_full_enabled"); return; }
         if (kind>=3 && kind<=4 && (!state.battleReady || GetTickCount()-state.battleTick>250)) { LeaveCriticalSection(&gate); errorResponse(out,"battle_controls_unavailable"); return; }
         if (state.pendingId) { LeaveCriticalSection(&gate); errorResponse(out,"command_pending"); return; }
         if (state.nextId == 2147483647) { LeaveCriticalSection(&gate); errorResponse(out,"command_id_exhausted"); return; }
@@ -141,6 +150,10 @@ static void respond(const char *input, char *out) {
     p=put(p,snapshot.noDuplicateCards ? ",\"noDuplicateCards\":true" : ",\"noDuplicateCards\":false");
     p=put(p,snapshot.foodRedraw ? ",\"foodRedraw\":true" : ",\"foodRedraw\":false");
     p=put(p,snapshot.autoRedistribute ? ",\"autoRedistribute\":true" : ",\"autoRedistribute\":false");
+    p=put(p,snapshot.resourcesFull ? ",\"resourcesFull\":true" : ",\"resourcesFull\":false");
+    p=put(p,snapshot.dataReady ? ",\"dataReady\":true" : ",\"dataReady\":false");
+    p=field(p,",\"food\":",snapshot.food); p=field(p,",\"medal\":",snapshot.medal);
+    p=field(p,",\"friendship\":",snapshot.friendship); p=field(p,",\"unit\":",snapshot.unit);
     p=field(p,",\"filteredCards\":",snapshot.filteredCards); p=field(p,",\"fallbackCards\":",snapshot.fallbackCards);
     p=put(p,snapshot.hpGuard ? ",\"hpGuard\":true" : ",\"hpGuard\":false");
     p=put(p,",\"playerHp\":"); p=snapshot.playerHp < 0 ? put(p,"null") : number(p,snapshot.playerHp);
@@ -217,9 +230,10 @@ int __cdecl Tick(int marker,int a,int b) {
     if (initialized != 2 || GetCurrentThreadId()!=state.gameThreadId) return -3;
     EnterCriticalSection(&gate);
     state.heartbeat++; state.lastTick=GetTickCount();
-    if (marker==0) { state.cardBatch=-1; state.cardBatchEnabled=0; state.scriptVersion=a; state.capabilities=b; state.controlEnabled=state.battleReady=0; }
+    if (marker==0) { state.dataReady=0; state.cardBatch=-1; state.cardBatchEnabled=0; state.scriptVersion=a; state.capabilities=b; state.controlEnabled=state.battleReady=0; }
     else if (marker==1) { state.frame++; if (state.phase==0) state.phase=1; }
     else if (marker==2) {
+        state.dataReady=0;
         state.cardBatch=-1; state.cardBatchEnabled=0;
         state.generation++; state.phase=2; state.loadKind=a; state.loadSlot=b; state.lastLoadOutcome=0;
         state.playerHp=state.playerHpMax=state.enemyHp=state.enemyHpMax=-1;
@@ -236,6 +250,7 @@ int __cdecl Tick(int marker,int a,int b) {
         else if (c->kind==5) { state.noDuplicateCards=c->enabled; c->state=2; }
         else if (c->kind==6) { state.foodRedraw=c->enabled; c->state=2; }
         else if (c->kind==7) { state.autoRedistribute=c->enabled; c->state=2; }
+        else if (c->kind==9 && !c->enabled) { state.resourcesFull=0; c->state=2; }
         else if (c->kind==1 && state.scriptVersion==1 && (state.capabilities & 4)) { state.hpGuard=c->enabled; c->state=2; }
         if (c->state!=1) { state.lastCommandState=c->state; state.pendingId=0; }
     }
@@ -282,6 +297,35 @@ int __cdecl Feature(int kind,int a,int b) {
 }
 
 /* Borrowed only for the synchronous CreateCard call; all array access stays in AIN. */
+int __cdecl Data(int op,int a,int b) {
+    (void)b;
+    if (initialized!=2 || GetCurrentThreadId()!=state.gameThreadId) return 0;
+    EnterCriticalSection(&gate);
+    LONG result=0;
+    Command *c=state.pendingId ? &state.commands[state.pendingId % HISTORY] : NULL;
+    int ready=state.phase==1 && state.scriptVersion==1 && (state.capabilities & 256);
+    if (op==6) state.dataReady=ready && a;
+    else if (ready) {
+        if (op==7) result=state.resourcesFull;
+        else if (op==10) state.food=a;
+        else if (op==11) state.medal=a;
+        else if (op==12) state.friendship=a;
+        else if (op==13) state.unit=a;
+    }
+    if (c && c->state==1 && (c->kind==8 || c->kind==9)) {
+        int valid=ready && c->generation==state.generation && GetTickCount()-c->submitted<=3000;
+        if (!valid) { c->state=3; state.lastCommandState=3; state.pendingId=0; }
+        else if (op==0) result=c->kind==9 ? 6 : c->argument;
+        else if (op==1) result=c->argument2;
+        else if (op==2) {
+            c->state=a ? 2 : 3;
+            if (a && c->kind==9) state.resourcesFull=c->enabled;
+            state.lastCommandState=c->state; state.pendingId=0;
+        }
+    }
+    LeaveCriticalSection(&gate); return result;
+}
+
 int __cdecl Cards(int op,int a,int b) {
     (void)b;
     if (initialized!=2 || GetCurrentThreadId()!=state.gameThreadId) return 0;

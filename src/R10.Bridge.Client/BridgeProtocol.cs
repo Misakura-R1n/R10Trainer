@@ -27,6 +27,13 @@ public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, lon
     public string? Session { get; init; }
     public bool BattleReady { get; init; }
     public bool NoDuplicateCards { get; init; }
+    public bool ResourcesFull { get; init; }
+    public bool DataReady { get; init; }
+    public long? Food { get; init; }
+    public long? Medal { get; init; }
+    public long? Friendship { get; init; }
+    public long? Unit { get; init; }
+    public bool DataAvailable => (Capabilities.GetValueOrDefault() & 256) != 0;
     public bool FoodRedraw { get; init; }
     public bool AutoRedistribute { get; init; }
     public bool FoodRedrawAvailable => (Capabilities.GetValueOrDefault() & 64) != 0;
@@ -56,6 +63,8 @@ public interface IBridgeClient
     Task PingAsync(CancellationToken cancellationToken = default);
     Task<BridgeCommand> SetFeatureForSessionAsync(string session, string feature, bool enabled, long generation, CancellationToken cancellationToken = default);
     Task<BridgeCommand> GetCommandResultForSessionAsync(string session, long id, CancellationToken cancellationToken = default);
+    Task<BridgeCommand> SetValueForSessionAsync(string session, string feature, int value, long generation, CancellationToken cancellationToken = default) =>
+        throw new BridgeException("unsupported_operation", "This bridge client does not support typed data operations.");
     Task<BridgeCommand> ActionForSessionAsync(string session, int action, int argument, int argument2, long generation, CancellationToken cancellationToken = default) =>
         throw new BridgeException("unsupported_operation", "This bridge client does not support semantic controls.");
 }

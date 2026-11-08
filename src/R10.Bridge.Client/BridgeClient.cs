@@ -33,7 +33,23 @@ public sealed class BridgeClient : IBridgeClient
             NullableInteger(response, "scriptVersion"), NullableInteger(response, "capabilities"),
             NullableNonnegativeInteger(response, "loadKind"), NullableInteger(response, "loadSlot"),
             NullableNonnegativeInteger(response, "lastCompletedGeneration"), NullableNonnegativeInteger(response, "lastLoadOutcome"))
-        { FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True };
+        { ResourcesFull = response.TryGetProperty("resourcesFull", out var full) && full.ValueKind == JsonValueKind.True, DataReady = response.TryGetProperty("dataReady", out var data) && data.ValueKind == JsonValueKind.True, Food=NullableInteger(response,"food"), Medal=NullableInteger(response,"medal"), Friendship=NullableInteger(response,"friendship"), Unit=NullableInteger(response,"unit"), FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True };
+    }
+
+    public static bool ValidDataValue(string feature, int value) => feature switch
+    {
+        "food" or "medal" or "friendship" => value is >=0 and <=3,
+        "unit" => value is >=0 and <=999,
+        "star" => value is 10 or 40 or 80 or 200,
+        _ => false
+    };
+    public async Task<BridgeCommand> SetValueForSessionAsync(string session, string feature, int value, long generation, CancellationToken cancellationToken = default)
+    {
+        ValidateSession(session);
+        if (!ValidDataValue(feature,value) || generation<0) throw new BridgeException("invalid_value","数值或功能不受支持。");
+        var response=await ExchangeAsync(new { op="set_value", feature, value, generation },true,cancellationToken).ConfigureAwait(false);
+        try { return ParseCommand(response); }
+        catch (BridgeException error) { throw new BridgeException(error.Code,error.Message,true,error); }
     }
 
     public async Task<BridgeCommand> ActionForSessionAsync(string session, int action, int argument, int argument2, long generation, CancellationToken cancellationToken = default)
@@ -51,7 +67,7 @@ public sealed class BridgeClient : IBridgeClient
 
     public async Task<BridgeCommand> SetFeatureAsync(string feature, bool enabled, long generation, CancellationToken cancellationToken = default)
     {
-        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute")) throw new BridgeException("unsupported_feature", "Unsupported bridge feature.");
+        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute" or "resources_full")) throw new BridgeException("unsupported_feature", "Unsupported bridge feature.");
         if (generation < 0) throw new ArgumentOutOfRangeException(nameof(generation));
         var response = await ExchangeAsync(new { op = "set_feature", feature, enabled, generation }, true, cancellationToken).ConfigureAwait(false);
         try { return ParseCommand(response); }

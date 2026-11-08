@@ -315,10 +315,10 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(vm.events, [("tick", 4, 2, 0)])
 
     def test_startup_capabilities_match_full_profile(self):
-        self.assertEqual(self.report["capabilities"], 239)
+        self.assertEqual(self.report["capabilities"], 495)
         startup = next(h for h in self.report["hooks"] if h["id"] == 0x47DD)
         prefix = bytes.fromhex(startup["prefixHex"])
-        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 239))
+        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 495))
 
 
 if __name__ == "__main__":

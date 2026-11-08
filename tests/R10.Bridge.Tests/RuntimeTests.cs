@@ -6,6 +6,28 @@ static class RuntimeTests
 {
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("typed data uses game readiness, enforces full exclusion, and closes owned full flag", async () =>
+        {
+            var client=new RuntimeFixture { State=Ready() with { Capabilities=495,DataReady=true,Food=1,Medal=2,Friendship=0,Unit=50 } };
+            var runtime=new BridgeTrainerRuntime(client);
+            Check((await runtime.SetValueAsync(FeatureId.Food,3)).Success && client.ValueWrites.Count==1);
+            Check(!(await runtime.SetValueAsync(FeatureId.Star,99)).Success && client.ValueWrites.Count==1);
+            Check((await runtime.SetToggleAsync(FeatureId.Resources,true)).Success);
+            Check(!runtime.Current.Features[FeatureId.Food].CanEdit && runtime.Current.Features[FeatureId.Unit].CanEdit);
+            Check(!(await runtime.SetValueAsync(FeatureId.Medal,0)).Success && client.ValueWrites.Count==1);
+            Check((await runtime.SetValueAsync(FeatureId.Star,200)).Success && client.ValueWrites.Last()=="star:200:3");
+            client.State=client.State with { DataReady=false };
+            Check(!(await runtime.SetValueAsync(FeatureId.Unit,200)).Success && client.ValueWrites.Count==2);
+            Check((await runtime.TryCloseAsync()).Success && !client.State.ResourcesFull);
+        });
+        await test("typed unknown outcome is reported without retry or rollback", async () =>
+        {
+            var client=new RuntimeFixture { State=Ready() with { Capabilities=495,DataReady=true },ValueError=new BridgeException("lost","fixture",true) };
+            var runtime=new BridgeTrainerRuntime(client);
+            var result=await runtime.SetValueAsync(FeatureId.Star,40);
+            Check(!result.Success && result.Error!.Contains("结果未知") && client.ValueWrites.Count==1);
+            Check((await runtime.TryCloseAsync()).Success && client.ValueWrites.Count==1);
+        });
         await test("script branch capabilities and independent close ownership", async () =>
         {
             var client=new RuntimeFixture(); var runtime=new BridgeTrainerRuntime(client);
@@ -177,6 +199,15 @@ static class RuntimeTests
         public Exception? ReadError { get; set; }
         public Func<bool, CancellationToken, Task<BridgeCommand>>? Set { get; set; }
         public Func<long, CancellationToken, Task<BridgeCommand>>? Result { get; set; }
+        public List<string> ValueWrites { get; } = [];
+        public BridgeException? ValueError;
+        public Task<BridgeCommand> SetValueForSessionAsync(string session,string feature,int value,long generation,CancellationToken cancellationToken=default)
+        {
+            if(session!=Session) throw new BridgeException("session_changed","fixture");
+            ValueWrites.Add($"{feature}:{value}:{generation}");
+            if(ValueError is not null) throw ValueError;
+            return Task.FromResult(new BridgeCommand(ValueWrites.Count,"applied"));
+        }
         public List<bool> Writes { get; } = [];
         public List<string> FeatureWrites { get; } = [];
         public int ProcessId => State.Pid;
@@ -191,6 +222,7 @@ static class RuntimeTests
             if (Set is not null) return Set(enabled, cancellationToken);
             State = feature switch {
                 "hp_guard"=>State with { HpGuard=enabled }, "no_duplicate_cards"=>State with { NoDuplicateCards=enabled },
+                "resources_full"=>State with { ResourcesFull=enabled },
                 "food_redraw"=>State with { FoodRedraw=enabled }, "auto_redistribute"=>State with { AutoRedistribute=enabled },
                 _=>throw new InvalidOperationException("Unknown fixture feature") };
             return Task.FromResult(new BridgeCommand(Writes.Count, "applied"));

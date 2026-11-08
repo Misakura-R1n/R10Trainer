@@ -51,6 +51,17 @@ await Test("set_feature sends exact generation and only queues", async () =>
     Check(command.Id == 7 && !command.IsTerminal);
     Check(transport.Requests.Single().GetRawText() == "{\"op\":\"set_feature\",\"feature\":\"hp_guard\",\"enabled\":true,\"generation\":3}");
 });
+await Test("typed values validate bounds and bind exact session and generation", async () =>
+{
+    var transport=new FixtureTransport(_=>Ok(new { id=7,state="queued" }),"42:123");
+    var client=new BridgeClient(42,transport);
+    await client.SetValueForSessionAsync("42:123","star",200,3);
+    Check(transport.Requests.Single().GetRawText()=="{\"op\":\"set_value\",\"feature\":\"star\",\"value\":200,\"generation\":3}");
+    Check((await Error(()=>client.SetValueForSessionAsync("42:other","food",3,3))).Code=="session_changed");
+    foreach(var (feature,value) in new[] {("food",4),("medal",-1),("friendship",4),("unit",1000),("star",99),("unknown",1)})
+        Check((await Error(()=>client.SetValueForSessionAsync("42:123",feature,value,3))).Code=="invalid_value");
+    Check(transport.Requests.Count==1);
+});
 await Test("unsupported feature never reaches transport", async () =>
 {
     var transport = new FixtureTransport(_ => State());
@@ -143,7 +154,7 @@ await Test("MCP lists only implemented tools", async () =>
     var server = new McpServer(new BridgeClient(42, new FixtureTransport(_ => State()))); await Initialize(server);
     var result = await server.HandleLineAsync(Request("tools/list").ToJsonString());
     var names = result!["result"]!["tools"]!.AsArray().Select(tool => tool!["name"]!.GetValue<string>()).ToArray();
-    Check(names.SequenceEqual(new[] { "load_save", "end_turn", "use_skill", "input", "get_state", "set_feature", "get_command_result" }));
+    Check(names.SequenceEqual(new[] { "load_save", "end_turn", "use_skill", "input", "get_state", "set_value", "set_feature", "get_command_result" }));
 });
 await Test("MCP fixture cannot claim live and preserves structured result", async () =>
 {
@@ -152,12 +163,19 @@ await Test("MCP fixture cannot claim live and preserves structured result", asyn
     Check(content["live"]!.GetValue<bool>() == false && content["isSimulation"]!.GetValue<bool>() && content["state"]!["playerHp"] is null);
     Check(JsonNode.DeepEquals(content, JsonNode.Parse(result["result"]!["content"]![0]!["text"]!.GetValue<string>())));
 });
-await Test("MCP rejects set_value and extra mutation params", async () =>
+await Test("MCP rejects missing typed arguments and extra mutation params", async () =>
 {
     var transport = new FixtureTransport(_ => State()); var server = new McpServer(new BridgeClient(42, transport)); await Initialize(server);
     Check((await Call(server, "set_value"))["error"]!["code"]!.GetValue<int>() == -32602);
     Check((await Call(server, "set_feature", new { session = "42:123", feature = "hp_guard", enabled = true, generation = 3, extra = 1 }))["error"]!["code"]!.GetValue<int>() == -32602);
     Check(transport.Requests.Count == 0);
+});
+await Test("MCP typed value uses one queued submission and polls same command", async () =>
+{
+    var transport=new FixtureTransport(request=>Ok(new { id=7,state=request.GetProperty("op").GetString()=="set_value" ? "queued" : "applied" }));
+    var server=new McpServer(new BridgeClient(42,transport)); await Initialize(server);
+    var result=Content(await Call(server,"set_value",new {session="42:123",feature="unit",value=80,generation=3,wait_ms=500}));
+    Check(result["outcome"]!.GetValue<string>()=="applied" && transport.Requests.Count(x=>x.GetProperty("op").GetString()=="set_value")==1);
 });
 await Test("MCP mutation requires matching session", async () =>
 {

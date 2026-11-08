@@ -102,6 +102,28 @@ internal static class Program
         tick(2,1,5005); Check(feature(7,0,0)==0,"loading suspends branch switches");
         Check(Request(SetFeature("auto_redistribute",false)).GetProperty("error").GetString()=="generation_mismatch","old generation cannot change branch switches");
         tick(3,1,0); tick(0,1,63); Check(feature(7,0,0)==0,"removed capability cannot retain active script effect");
+        var data=Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Data"));
+        string SetValue(string name,int value,int generation=5) => JsonSerializer.Serialize(new {op="set_value",feature=name,value,generation});
+        Check(Request(SetValue("food",3)).GetProperty("error").GetString()=="script_hook_unavailable","old script rejects typed values");
+        tick(0,1,511); tick(1,16,16);
+        Check(Request(SetValue("food",3)).GetProperty("error").GetString()=="data_not_ready","title data is unavailable");
+        data(6,1,0);
+        foreach(var invalid in new[] {SetValue("food",4),SetValue("unit",1000),SetValue("star",99),SetValue("unknown",1)})
+            Check(!Request(invalid).GetProperty("ok").GetBoolean(),"typed bounds enforced in native parser");
+        int typed=Request(SetValue("food",3)).GetProperty("id").GetInt32(); tick(1,16,16);
+        Check(data(0,0,0)==1 && data(1,0,0)==3,"typed value waits for AIN game-thread setter");
+        Task.Run(()=>data(2,1,0)).GetAwaiter().GetResult();
+        Check(data(0,0,0)==1,"background thread cannot acknowledge value");
+        data(2,1,0);
+        Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=typed})).GetProperty("state").GetString()=="applied","AIN readback acknowledges typed value");
+        Request(SetFeature("resources_full",true,5)); tick(1,16,16);
+        Check(data(0,0,0)==6 && data(7,0,0)==0,"full enable waits for valid game context");
+        data(2,1,0); Check(data(7,0,0)==1,"full enable applied on game thread");
+        Check(Request(SetValue("food",0)).GetProperty("error").GetString()=="resources_full_enabled","manual resources blocked while full enabled");
+        Request(SetFeature("resources_full",false,5)); tick(1,16,16); Check(data(7,0,0)==0,"full disable independent of object readiness");
+        int stale=Request(SetValue("star",200)).GetProperty("id").GetInt32(); tick(2,1,5005); tick(1,16,16);
+        Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=stale})).GetProperty("state").GetString()=="rejected" && data(0,0,0)==0,"load invalidates queued data command");
+        Check(!Request("{\"op\":\"get_state\"}").GetProperty("dataReady").GetBoolean(),"load clears data snapshot readiness");
         Console.WriteLine($"{checks-failed} passed, {failed} failed native helper checks; simulation=true; this is not a game compatibility test.");
         return failed==0 ? 0 : 1;
     }

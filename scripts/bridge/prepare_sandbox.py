@@ -117,7 +117,7 @@ def prepare(source: Path, target: Path, save_root: Path, game_name: str,
     save_hashes = hashes(save_source)
     manifest = json.loads((bridge_directory / "bridge-build.json").read_text(encoding="utf-8-sig"))
     bridge_ain = bridge_directory / "Rance10.ain"
-    require(manifest["sourceSha256"] == CORE_SHA["Rance10.ain"] and (manifest["profile"], manifest["capabilities"]) in (("full", 15), ("controls", 31), ("full", 47), ("controls", 63), ("full", 239), ("controls", 255)) and
+    require(manifest["sourceSha256"] == CORE_SHA["Rance10.ain"] and (manifest["profile"], manifest["capabilities"]) in (("full", 15), ("controls", 31), ("full", 47), ("controls", 63), ("full", 239), ("controls", 255), ("full", 495), ("controls", 511)) and
             manifest["aliceOfflineParsePassed"] is True and
             file_sha(bridge_ain) == manifest["outputSha256"], "Bridge AIN and its full-profile build manifest do not match")
     dll = bridge_dll.read_bytes()

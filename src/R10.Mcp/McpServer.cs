@@ -126,7 +126,7 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
         var arguments = parameters["arguments"] as JsonObject ?? new JsonObject();
         if (parameters["arguments"] is not null and not JsonObject) throw new ToolParameterException("Tool arguments must be an object");
         string? operationSession = null;
-        var mutation = name is "input" or "load_save" or "end_turn" or "use_skill" or "set_feature";
+        var mutation = name is "input" or "load_save" or "end_turn" or "use_skill" or "set_feature" or "set_value";
         if (mutation) await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -181,10 +181,19 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
                         return ToolResult(Envelope(false, "unknown", command: new BridgeCommand(commandId, "unknown"), outcomeUnknown: true,
                             error: new { code = error.Code, message = error.Message }, live: false, session: operationSession));
                     }
+                case "set_value":
+                    Only(arguments,"feature","value","generation","wait_ms","session");
+                    operationSession=RequiredSession(arguments);
+                    string dataFeature=String(arguments["feature"]) ?? "";
+                    int dataValue=BoundedInteger(arguments,"value",0,999);
+                    if (!BridgeClient.ValidDataValue(dataFeature,dataValue)) throw new ToolParameterException("Unsupported feature or value");
+                    int dataWait=arguments.ContainsKey("wait_ms") ? BoundedInteger(arguments,"wait_ms",0,5000) : 0;
+                    var dataCommand=await bridge.SetValueForSessionAsync(operationSession,dataFeature,dataValue,PositiveInteger(arguments,"generation",true),cancellationToken).ConfigureAwait(false);
+                    return dataWait==0 || dataCommand.IsTerminal ? ToolResult(CommandEnvelope(dataCommand,operationSession)) : await WaitForCommandAsync(dataCommand,operationSession,dataWait,cancellationToken).ConfigureAwait(false);
                 case "set_feature":
                     Only(arguments, "feature", "enabled", "generation", "wait_ms", "session");
                     operationSession = RequiredSession(arguments);
-                    if (String(arguments["feature"]) is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute")) throw new ToolParameterException("Unsupported feature");
+                    if (String(arguments["feature"]) is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute" or "resources_full")) throw new ToolParameterException("Unsupported feature");
                     if (arguments["enabled"] is not JsonValue enabledNode || !enabledNode.TryGetValue<bool>(out var enabled))
                         throw new ToolParameterException("enabled must be boolean");
                     var generation = PositiveInteger(arguments, "generation", allowZero: true);
@@ -263,8 +272,11 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
             annotations = new { readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false } },
         new { name = "get_state", description = "Read the selected R10 native bridge snapshot. Missing HP is null; readiness and live transport do not prove gameplay effect.",
             inputSchema = Schema(new { }), outputSchema = OutputSchema(), annotations = new { readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false } },
+        new { name = "set_value", description = "Set a finite typed game value on the game thread. Requires dataAvailable and dataReady. food/medal/friendship: 0..3 (disable resources_full first); unit: 0..999; star: 10/40/80/200, changes all created characters and clears experience, can reduce levels. Star uses the game's maximum and next-experience calculation. Read state first; never retry an unknown result automatically.",
+            inputSchema = Schema(new { session=new { type="string" }, feature=new { type="string", @enum=new[] { "food","medal","friendship","unit","star" } }, value=new { type="integer",minimum=0,maximum=999 }, generation=new { type="integer",minimum=0 }, wait_ms=new { type="integer",minimum=0,maximum=5000 } },"session","feature","value","generation"), outputSchema=OutputSchema(),
+            annotations=new { readOnlyHint=false,destructiveHint=true,idempotentHint=false,openWorldHint=false } },
         new { name = "set_feature", description = "Queue a component feature in the supplied process session and load generation; requires its corresponding availability capability in get_state. Card changes apply to the next reward batch. queued is not applied. wait_ms polls the same ID and session, never resubmits.",
-            inputSchema = Schema(new { session = new { type = "string", minLength = 1 }, feature = new { type = "string", @enum = new[] { "hp_guard", "no_duplicate_cards", "food_redraw", "auto_redistribute" } }, enabled = new { type = "boolean" }, generation = new { type = "integer", minimum = 0 }, wait_ms = new { type = "integer", minimum = 0, maximum = 5000, @default = 0 } }, "session", "feature", "enabled", "generation"),
+            inputSchema = Schema(new { session = new { type = "string", minLength = 1 }, feature = new { type = "string", @enum = new[] { "hp_guard", "no_duplicate_cards", "food_redraw", "auto_redistribute", "resources_full" } }, enabled = new { type = "boolean" }, generation = new { type = "integer", minimum = 0 }, wait_ms = new { type = "integer", minimum = 0, maximum = 5000, @default = 0 } }, "session", "feature", "enabled", "generation"),
             outputSchema = OutputSchema(), annotations = new { readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false } },
         new { name = "get_command_result", description = "Read one of the native bridge's last 16 command results. command_not_found does not mean the command never ran.",
             inputSchema = Schema(new { session = new { type = "string", minLength = 1 }, id = new { type = "integer", minimum = 1 } }, "session", "id"), outputSchema = OutputSchema(),

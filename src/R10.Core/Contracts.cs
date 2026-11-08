@@ -14,7 +14,7 @@ public static class FeatureCatalog
         new FeatureDefinition(FeatureId.EnemyNear, "敌人濒死", FeatureGroup.Battle, FeatureKind.Toggle),
         new FeatureDefinition(FeatureId.Difficulty, "难度", FeatureGroup.Battle, FeatureKind.Number, -9999, 9999),
         new FeatureDefinition(FeatureId.Turn, "回合", FeatureGroup.Strategy, FeatureKind.Number, 0, 999, HasLock:true, Help:"只修改回合数字，不会倒退剧情。"),
-        new FeatureDefinition(FeatureId.DeathRate, "人类死亡率", FeatureGroup.Strategy, FeatureKind.Number, 0, 100, .1m, "%", true, "累计人类死亡率。读档前请关闭锁定，读档后重新开启；沿用原地址的读档不一定能被识别。"),
+        new FeatureDefinition(FeatureId.DeathRate, "人类死亡率", FeatureGroup.Strategy, FeatureKind.Number, 0, 100, .1m, "%", true, "累计人类死亡率。接入组件后读档会取消旧锁定；未接入组件时请在读档前关闭、读档后重开。"),
         new FeatureDefinition(FeatureId.Army, "四国兵力", FeatureGroup.Strategy, FeatureKind.Number, 0, 99999999, 1, "×千", true, "应用时将四国兵力设为同一数值；锁定时分别保持四国当前兵力。"),
         new FeatureDefinition(FeatureId.War, "四国战果全满", FeatureGroup.Strategy, FeatureKind.Toggle, Help:"持续补满四国战果，关闭只停止后续修改。"),
         new FeatureDefinition(FeatureId.Food, "食券 / 金块", FeatureGroup.Resources, FeatureKind.Number, 0, 3, Help:"第一部食券与第二部金块共用的计数。"),

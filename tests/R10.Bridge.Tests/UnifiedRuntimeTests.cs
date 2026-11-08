@@ -51,8 +51,8 @@ static class UnifiedRuntimeTests
             Check((await runtime.SetToggleAsync(FeatureId.EnemyNear, true)).Success);
             Check((await runtime.SetValueAsync(FeatureId.Food, 3)).Success);
             Check((await runtime.SetLockAsync(FeatureId.Turn, true)).Success);
-            Check(memory.Writes.SequenceEqual(new[] { "toggle:EnemyNear:True", "value:Food:3", "lock:Turn:True" }));
-            Check(bridge.Writes.SequenceEqual(new[] { "toggle:Hp:True", "toggle:Hp:False", "toggle:NoDuplicateCards:True", "toggle:Redraw:True", "toggle:Redistribute:True" }));
+            Check(memory.Writes.SequenceEqual(new[] { "toggle:EnemyNear:True", "lock:Turn:True" }));
+            Check(bridge.Writes.SequenceEqual(new[] { "toggle:Hp:True", "toggle:Hp:False", "toggle:NoDuplicateCards:True", "toggle:Redraw:True", "toggle:Redistribute:True", "value:Food:3" }));
             Check((await runtime.TryCloseAsync()).Success && memory.Closes == 1 && bridge.Closes == 1);
         });
         await test("unified original game keeps other features and never falls back to HP healing", async () =>
@@ -60,10 +60,10 @@ static class UnifiedRuntimeTests
             var memory = new Fixture(); var bridge = new Fixture { Current = Snapshot(null, ConnectionState.Error, false) };
             var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
             await runtime.StartAsync();
-            Check(!runtime.Current.Features[FeatureId.Hp].CanEdit && !runtime.Current.Features[FeatureId.NoDuplicateCards].CanEdit && runtime.Current.Features[FeatureId.Food].CanEdit);
+            Check(!runtime.Current.Features[FeatureId.Hp].CanEdit && !runtime.Current.Features[FeatureId.NoDuplicateCards].CanEdit && runtime.Current.Features[FeatureId.Turn].CanEdit);
             Check(!(await runtime.SetToggleAsync(FeatureId.Hp, true)).Success && memory.Writes.Count == 0 && bridge.Writes.Count == 0);
             Check(!(await runtime.SetToggleAsync(FeatureId.NoDuplicateCards, true)).Success && memory.Writes.Count == 0 && bridge.Writes.Count == 0);
-            Check((await runtime.SetValueAsync(FeatureId.Food, 2)).Success && memory.Writes.Count == 1);
+            Check((await runtime.SetValueAsync(FeatureId.Turn, 2)).Success && memory.Writes.Count == 1);
             Check((await runtime.TryCloseAsync()).Success);
         });
         await test("unified component capabilities are independent", async () =>
@@ -87,7 +87,7 @@ static class UnifiedRuntimeTests
         {
             var memory = new Fixture(); var bridge = new Fixture { Current = Snapshot(43) };
             var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
-            Check(!runtime.Current.Features[FeatureId.Hp].CanEdit && !runtime.Current.Features[FeatureId.Food].CanEdit);
+            Check(!runtime.Current.Features[FeatureId.Hp].CanEdit && !runtime.Current.Features[FeatureId.Turn].CanEdit);
             Check(!(await runtime.SetToggleAsync(FeatureId.Hp, true)).Success && !(await runtime.SetValueAsync(FeatureId.Food, 3)).Success);
             bridge.Publish(Snapshot(42));
             Check(runtime.Current.Features[FeatureId.Hp].CanEdit && (await runtime.SetToggleAsync(FeatureId.Hp, true)).Success);
@@ -146,7 +146,7 @@ static class UnifiedRuntimeTests
             var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
             Check(runtime.Current.Features[FeatureId.Hp].CanEdit);
             bridge.Publish(Snapshot(42, ConnectionState.Error, false));
-            Check(!runtime.Current.Features[FeatureId.Hp].CanEdit && runtime.Current.Features[FeatureId.Food].CanEdit);
+            Check(!runtime.Current.Features[FeatureId.Hp].CanEdit && runtime.Current.Features[FeatureId.Turn].CanEdit);
             Check(!(await runtime.SetToggleAsync(FeatureId.Hp, true)).Success && memory.Writes.Count == 0);
             Check((await runtime.TryCloseAsync()).Success);
         });

@@ -3,5 +3,6 @@ EXPORTS
     Cards
     Control
     Feature
+    Data
     Tick
     FilterHp

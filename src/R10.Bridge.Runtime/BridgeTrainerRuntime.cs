@@ -10,8 +10,14 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
         new Dictionary<FeatureId, (string, int)>
         {
             [FeatureId.Hp] = ("hp_guard", 4), [FeatureId.NoDuplicateCards] = ("no_duplicate_cards", 32),
+            [FeatureId.Resources] = ("resources_full",256),
             [FeatureId.Redraw] = ("food_redraw", 64), [FeatureId.Redistribute] = ("auto_redistribute", 128)
         };
+    internal static readonly IReadOnlyDictionary<FeatureId,string> ValueFeatures = new Dictionary<FeatureId,string>
+    {
+        [FeatureId.Food]="food", [FeatureId.Medal]="medal", [FeatureId.Friendship]="friendship",
+        [FeatureId.Unit]="unit", [FeatureId.Star]="star"
+    };
     private readonly IBridgeClient _client;
     private readonly SemaphoreSlim _gate = new(1);
     private readonly CancellationTokenSource _stop = new();
@@ -29,7 +35,30 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
     public BridgeTrainerRuntime(string gameDirectory) : this(new DiscoveringBridgeClient(gameDirectory)) { }
     public BridgeTrainerRuntime(IBridgeClient client) => _client=client;
     public Task StartAsync() { lock (_startGate) { if (!_closed) _loop ??= Task.Run(PollAsync); } return Task.CompletedTask; }
-    public Task<OperationResult> SetValueAsync(FeatureId id,decimal value) => Task.FromResult(OperationResult.Fail("桥接模式暂未接入此数值功能。"));
+    public async Task<OperationResult> SetValueAsync(FeatureId id,decimal value)
+    {
+        if (!ValueFeatures.TryGetValue(id,out var feature) || !FeatureCatalog.ValidValue(id,value)) return OperationResult.Fail("数值或功能不受支持。");
+        if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在关闭组件连接。");
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_closed || Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("组件连接已关闭或正在关闭。");
+            var state=await _client.GetStateAsync().ConfigureAwait(false);
+            if (!CanWriteData(state) || state.Session is null) return OperationResult.Fail("请安装新版组件并等待游戏数据就绪。");
+            if (state.ResourcesFull && id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship)
+                return OperationResult.Fail("请先关闭资源全满，再单独修改此数值。");
+            var command=await _client.SetValueForSessionAsync(state.Session,feature,(int)value,state.LoadGeneration).ConfigureAwait(false);
+            command=await AwaitCommandAsync(state.Session,command).ConfigureAwait(false);
+            try { await RefreshAsync().ConfigureAwait(false); } catch (BridgeException error) { PublishError(error); }
+            return CommandResult(command);
+        }
+        catch (BridgeException error)
+        {
+            PublishError(error);
+            return OperationResult.Fail(error.OutcomeUnknown ? "写入结果未知，请检查游戏状态；不要直接重复提交。" : error.Message);
+        }
+        finally { _gate.Release(); }
+    }
     public Task<OperationResult> SetLockAsync(FeatureId id,bool enabled) => Task.FromResult(OperationResult.Fail("桥接模式暂未接入锁定功能。"));
 
     public async Task<OperationResult> SetToggleAsync(FeatureId id,bool enabled)
@@ -45,7 +74,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
             if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在确认桥接关闭，请稍后再操作。");
             var state=await _client.GetStateAsync().ConfigureAwait(false);
             if (_ownedSession is not null && _ownedSession!=state.Session) { _owned.Clear(); _ownedSession=null; previouslyOwned=false; previousSession=null; }
-            if (!CanWrite(state, id)) return OperationResult.Fail("游戏组件尚未就绪，或当前版本不支持此功能。");
+            if (!CanWrite(state, id) || (id==FeatureId.Resources && enabled && !CanWriteData(state))) return OperationResult.Fail("游戏组件尚未就绪，或当前版本不支持此功能。");
             if (enabled) { _owned.Add(id); _ownedSession=state.Session; }
             var command=await ChangeFeatureAsync(state,id,enabled).ConfigureAwait(false);
             if (command.State=="rejected" && enabled) { if (previouslyOwned) _owned.Add(id); else _owned.Remove(id); _ownedSession=previousSession; }
@@ -95,13 +124,17 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
     {
         if (state.Session is null) throw new BridgeException("session_required","桥接未提供进程会话标识。");
         var command=await _client.SetFeatureForSessionAsync(state.Session,ComponentFeatures[id].Name,enabled,state.LoadGeneration).ConfigureAwait(false);
+        return await AwaitCommandAsync(state.Session,command).ConfigureAwait(false);
+    }
+    private async Task<BridgeCommand> AwaitCommandAsync(string session,BridgeCommand command)
+    {
         using var deadline=new CancellationTokenSource(TimeSpan.FromMilliseconds(2500));
         try
         {
             while (!command.IsTerminal)
             {
                 await Task.Delay(25,deadline.Token).ConfigureAwait(false);
-                command=await _client.GetCommandResultForSessionAsync(state.Session,command.Id,deadline.Token).ConfigureAwait(false);
+                command=await _client.GetCommandResultForSessionAsync(session,command.Id,deadline.Token).ConfigureAwait(false);
             }
             return command;
         }
@@ -155,6 +188,18 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
                 Detail:available ? "游戏线程控制脚本分支，无需扫描或改写运行中的指令。" : "请安装新版游戏组件并重新启动游戏。",
                 Help:FeatureCatalog.Get(id).Help,ActiveDescription:"游戏线程已应用开关；具体玩法验证范围见说明。");
         }
+        bool dataReady=CanWriteData(state);
+        features[FeatureId.Resources]=new(Requested:state.ResourcesFull,Active:state.ResourcesFull && dataReady,
+            CanEdit:CanWrite(state,FeatureId.Resources) && (dataReady || state.ResourcesFull),
+            Detail:"在游戏更新时补足资源，保留正常消费流程；关闭不回退已改数值。", Help:FeatureCatalog.Get(FeatureId.Resources).Help);
+        foreach (var id in ValueFeatures.Keys)
+        {
+            long? current=id switch { FeatureId.Food=>state.Food, FeatureId.Medal=>state.Medal, FeatureId.Friendship=>state.Friendship, FeatureId.Unit=>state.Unit, _=>null };
+            bool full=state.ResourcesFull && id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship;
+            features[id]=new(Value:dataReady ? current : null,CanEdit:dataReady && !full,
+                Detail:full ? "请先关闭资源全满。" : dataReady ? "通过游戏自身方法修改。" : "请安装新版组件并等待游戏数据就绪。",
+                Help:FeatureCatalog.Get(id).Help);
+        }
         var connection=state.Phase!=1 ? ConnectionState.Loading : state.HeartbeatAgeMs is null or <0 or >2000 ? ConnectionState.Error : ComponentFeatures.Keys.Any(id=>CanWrite(state,id)) ? ConnectionState.Ready : ConnectionState.Unsupported;
         Publish(new(connection,$"桥接 · PID {state.Pid} · 读档 {state.LoadGeneration}",state.Pid,_client.IsSimulation,features,
             connection==ConnectionState.Error ? "游戏线程心跳未知或暂停，已停用操作。" : connection==ConnectionState.Unsupported ? "当前脚本尚未提供兼容的组件功能入口。" : null,"bridge",
@@ -163,6 +208,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
                     ? new(state.Pid,session,state.LoadGeneration,state.Phase==1 && state.HeartbeatAgeMs is >=0 and <=2000) : null
             });
     }
+    private static bool CanWriteData(BridgeState state) => CanWrite(state,FeatureId.Resources) && state.DataReady;
     private static bool CanWrite(BridgeState state,FeatureId id=FeatureId.Hp) => state.Phase==1 && state.ScriptVersion==1 && ComponentFeatures.TryGetValue(id,out var feature) && (state.Capabilities.GetValueOrDefault() & feature.Capability)!=0 && state.HeartbeatAgeMs is >=0 and <=2000;
     private static Dictionary<FeatureId,FeatureObservation> EmptyFeatures() => FeatureCatalog.All.ToDictionary(x=>x.Id,_=>new FeatureObservation(Detail:"此功能尚未接入桥接模式。"));
     private void PublishError(BridgeException error)

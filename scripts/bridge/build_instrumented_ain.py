@@ -206,6 +206,7 @@ def prelude(hook: dict, header_pc: int, library: int) -> tuple[bytes, list[dict]
     emit("CALLHLL", library, 0, -1)
     emit("POP")  # Tick returns int; original body must start with an empty evaluation stack.
     if hook.get("sampler") is not None: emit("CALLFUNC", hook["sampler"])
+    if hook.get("data") is not None: emit("CALLFUNC", hook["data"])
     if hook.get("controls") is not None: emit("CALLFUNC", hook["controls"])
     emit("JUMP", hook["entry"])
     emit("ENDFUNC", hook["id"])  # unreachable terminator for offline tools
@@ -231,7 +232,7 @@ def verify_prelude(rows: list[dict], hook: dict, library: int) -> None:
             require(stack == expected, "HLL argument order or evaluation stack mismatch")
             stack = [12345]
         elif op == "POP": stack.pop()
-        elif op == "CALLFUNC": require(args[0] in (hook.get("sampler"), hook.get("controls")) and not stack, "Invalid helper call")
+        elif op == "CALLFUNC": require(args[0] in (hook.get("sampler"), hook.get("controls"), hook.get("data")) and not stack, "Invalid helper call")
         elif op == "JUMP":
             require(args[0] == hook["entry"] and not stack, "Original entry stack is not empty")
             return
@@ -263,7 +264,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     extended = bytearray(code[:-6])  # move terminal FUNC 0 after the appended prefixes
     report_hooks, listing, added_functions, code_edits = [], [], [], []
     hooks = [dict(hook) for hook in HOOKS]
-    capabilities = 255 if profile == "controls" else 239 if profile == "full" else 1
+    capabilities = 511 if profile == "controls" else 495 if profile == "full" else 1
     hooks[0]["tickArguments"] = [("const", 1), ("const", capabilities)]
     redirected = set()
 
@@ -360,6 +361,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         install_cards(add_function, replace_code, code, instruction)
         from feature_ain import install_features
         install_features(add_function, replace_code, instruction)
+        from data_ain import install_data
+        hooks[1]["data"] = install_data(add_function)
 
     if profile == "controls":
         from controls_ain import install_controls
@@ -393,7 +396,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))
-    declaration = b"R10Bridge\0" + i32(5 if profile in {"full", "controls"} else 1) + b"Tick\0" + i32(10) + i32(3)
+    declaration = b"R10Bridge\0" + i32(6 if profile in {"full", "controls"} else 1) + b"Tick\0" + i32(10) + i32(3)
     declaration += b"marker\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     if profile in {"full", "controls"}:
         declaration += b"FilterHp\0" + i32(10) + i32(3)
@@ -403,6 +406,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     if profile in {"full", "controls"}:
         declaration += b"Cards\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
         declaration += b"Feature\0" + i32(10) + i32(3) + b"kind\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
+        declaration += b"Data\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     hll = b"HLL0" + i32(len(libraries) + 1) + sections["HLL0"][8:] + declaration
     updated = {**sections, "CODE": b"CODE" + i32(len(extended)) + extended, "FUNC": bytes(func), "HLL0": hll}
     # Verify narrow mutations independently of byte serialization and preserve all text/metadata.

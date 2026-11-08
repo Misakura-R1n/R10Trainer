@@ -35,6 +35,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'AIN offline verification failed.' }
         & $PythonPath -B scripts/bridge/test_cards_ain.py --source $SourceAin
         if ($LASTEXITCODE -ne 0) { throw 'Card filter verification failed.' }
+        & $PythonPath -B scripts/bridge/test_data_ain.py --source $SourceAin
+        if ($LASTEXITCODE -ne 0) { throw "Data AIN checks failed." }
         & $PythonPath -B scripts/bridge/test_feature_ain.py --source $SourceAin
         if ($LASTEXITCODE -ne 0) { throw 'Component feature branch verification failed.' }
         & $PythonPath -B scripts/bridge/test_prepare_sandbox.py

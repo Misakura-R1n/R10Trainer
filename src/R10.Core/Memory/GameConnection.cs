@@ -12,10 +12,10 @@ public sealed class GameConnection : IDisposable
     public const string SupportedAinHash = "7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A";
     // The installer recompresses the exact same AI2 payload with the bundled .NET runtime.
     // Its compressed bytes may differ from Python/zlib, but no script byte may differ.
-    public const string SupportedBridgeAinPlainHash = "DD5B522E15A71A73A389A8EEF27DFA408379A8EF1E0A34C8C4C1B43561A02818";
+    public const string SupportedBridgeAinPlainHash = "7C674704D331F697339643A541958B259B8B7179D72346CA9C573F5A4B5829AF";
     public const string SupportedBridgeAinFingerprint = "bridge-v1:" + SupportedBridgeAinPlainHash;
-    public const int SupportedBridgeAinPlainLength = 28722620;
-    public const uint SupportedBridgeCodeLength = 14575474;
+    public const int SupportedBridgeAinPlainLength = 28724545;
+    public const uint SupportedBridgeCodeLength = 14577316;
     private readonly FileStream? _exe, _ain;
     public IProcessMemory Memory { get; }
     public string AinPath { get; }
