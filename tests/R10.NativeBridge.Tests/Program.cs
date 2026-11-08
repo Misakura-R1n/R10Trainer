@@ -121,6 +121,25 @@ internal static class Program
         data(2,1,0); Check(data(7,0,0)==1,"full enable applied on game thread");
         Check(Request(SetValue("food",0)).GetProperty("error").GetString()=="resources_full_enabled","manual resources blocked while full enabled");
         Request(SetFeature("resources_full",false,5)); tick(1,16,16); Check(data(7,0,0)==0,"full disable independent of object readiness");
+        foreach (var (name,value,kind) in new[] { ("food",3,1), ("unit",80,4), ("star",200,5) })
+        {
+            tick(1,16,16);
+            int claimed=Request(SetValue(name,value)).GetProperty("id").GetInt32();
+            Check(Task.Run(()=>data(0,0,0)).GetAwaiter().GetResult()==0,"background thread cannot claim data command");
+            Check(data(0,0,0)==kind,"game thread claims typed command");
+            Thread.Sleep(3050); // Suspend execution across the original queue deadline.
+            Check(data(1,0,0)==value,"claimed arguments survive deadline before setter");
+            tick(1,16,16);
+            Check(data(0,0,0)==kind && data(1,0,0)==value,"pump cannot expire executing command or change readback argument");
+            Check(Request(SetValue("food",1)).GetProperty("error").GetString()=="command_pending","executing slot cannot be replaced");
+            data(2,1,0);
+            Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=claimed})).GetProperty("state").GetString()=="applied","executing command acknowledges original ID after deadline");
+        }
+        tick(1,16,16);
+        int expiredData=Request(SetValue("star",40)).GetProperty("id").GetInt32();
+        Thread.Sleep(3050);
+        Check(data(0,0,0)==0 && Request(JsonSerializer.Serialize(new {op="get_command_result",id=expiredData})).GetProperty("state").GetString()=="rejected","unclaimed data command still expires before any setter");
+        tick(1,16,16);
         int stale=Request(SetValue("star",200)).GetProperty("id").GetInt32(); tick(2,1,5005); tick(1,16,16);
         Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=stale})).GetProperty("state").GetString()=="rejected" && data(0,0,0)==0,"load invalidates queued data command");
         Check(!Request("{\"op\":\"get_state\"}").GetProperty("dataReady").GetBoolean(),"load clears data snapshot readiness");

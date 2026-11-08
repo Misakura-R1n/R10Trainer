@@ -4,6 +4,7 @@
 
 #define BUILD "r10-bridge-v1"
 #define HISTORY 16
+#define EXECUTING 4 /* Internal state; externally still pending until acknowledged. */
 typedef struct { LONG id, generation, enabled, state, kind, argument, argument2; DWORD submitted; } Command;
 typedef struct {
     DWORD pid, gameThreadId, heartbeat, frame, lastTick;
@@ -44,7 +45,7 @@ static void copy(void *to, const void *from, unsigned n) {
     unsigned char *d = to; const unsigned char *s = from; while (n--) *d++ = *s++;
 }
 static void zero(void *to, unsigned n) { unsigned char *d = to; while (n--) *d++ = 0; }
-static const char *commandState(LONG n) { return n == 1 ? "queued" : n == 2 ? "applied" : n == 3 ? "rejected" : "none"; }
+static const char *commandState(LONG n) { return n == 1 || n == EXECUTING ? "queued" : n == 2 ? "applied" : n == 3 ? "rejected" : "none"; }
 static char *prefix(char *p) { return put(p, "{\"ok\":true,\"protocol\":1,\"build\":\"" BUILD "\""); }
 static char *field(char *p, const char *name, LONG value) { p = put(p,name); return number(p,value); }
 static void errorResponse(char *out, const char *error) {
@@ -246,13 +247,13 @@ int __cdecl Tick(int marker,int a,int b) {
     else if (marker==20) { state.selector=a; state.controlEnabled=b; if (!b) state.battleReady=0; }
     if (marker==1 && state.pendingId) {
         Command *c=&state.commands[state.pendingId % HISTORY];
-        if (c->generation!=state.generation || state.phase!=1 || state.scriptVersion!=1 || !(state.capabilities & capability(c->kind)) || GetTickCount()-c->submitted>3000) c->state=3;
+        if (c->generation!=state.generation || state.phase!=1 || state.scriptVersion!=1 || !(state.capabilities & capability(c->kind)) || (c->state!=EXECUTING && GetTickCount()-c->submitted>3000)) c->state=3;
         else if (c->kind==5) { state.noDuplicateCards=c->enabled; c->state=2; }
         else if (c->kind==6) { state.foodRedraw=c->enabled; c->state=2; }
         else if (c->kind==7) { state.autoRedistribute=c->enabled; c->state=2; }
         else if (c->kind==9 && !c->enabled) { state.resourcesFull=0; c->state=2; }
         else if (c->kind==1 && state.scriptVersion==1 && (state.capabilities & 4)) { state.hpGuard=c->enabled; c->state=2; }
-        if (c->state!=1) { state.lastCommandState=c->state; state.pendingId=0; }
+        if (c->state!=1 && c->state!=EXECUTING) { state.lastCommandState=c->state; state.pendingId=0; }
     }
     LONG result=state.generation; LeaveCriticalSection(&gate); return result;
 }
@@ -296,7 +297,8 @@ int __cdecl Feature(int kind,int a,int b) {
     LeaveCriticalSection(&gate); return result;
 }
 
-/* Borrowed only for the synchronous CreateCard call; all array access stays in AIN. */
+/* Claim once on the game thread. The pending slot pins immutable arguments until acknowledgement;
+   its queue deadline must never substitute zero while the synchronous AIN setter is executing. */
 int __cdecl Data(int op,int a,int b) {
     (void)b;
     if (initialized!=2 || GetCurrentThreadId()!=state.gameThreadId) return 0;
@@ -312,11 +314,11 @@ int __cdecl Data(int op,int a,int b) {
         else if (op==12) state.friendship=a;
         else if (op==13) state.unit=a;
     }
-    if (c && c->state==1 && (c->kind==8 || c->kind==9)) {
-        int valid=ready && c->generation==state.generation && GetTickCount()-c->submitted<=3000;
+    if (c && (c->state==1 || c->state==EXECUTING) && (c->kind==8 || c->kind==9)) {
+        int valid=ready && c->generation==state.generation && (c->state==EXECUTING || GetTickCount()-c->submitted<=3000);
         if (!valid) { c->state=3; state.lastCommandState=3; state.pendingId=0; }
-        else if (op==0) result=c->kind==9 ? 6 : c->argument;
-        else if (op==1) result=c->argument2;
+        else if (op==0) { c->state=EXECUTING; result=c->kind==9 ? 6 : c->argument; }
+        else if (op==1 && c->state==EXECUTING) result=c->argument2;
         else if (op==2) {
             c->state=a ? 2 : 3;
             if (a && c->kind==9) state.resourcesFull=c->enabled;
