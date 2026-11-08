@@ -230,9 +230,12 @@ public sealed class R10DataEngine
     private void WriteDeathRate(PointerGraph graph, int tenths, uint? expectedOwner = null, Func<bool>? contextValid = null)
     {
         RequireDeathRatePhase(graph);
+        uint turn = ResolveType(graph, TurnTable);
+        bool WritablePhase() { int phase = ReadInt(turn, 12); return InRange(phase, 1, 999) && phase != 16; }
         // Cumulative R/I/D/L only; stage cache S and historical/script flags are intentionally untouched.
         WriteFields(graph, CampaignTable, [0x94, 0x90, 0x88, 0x84],
-            [tenths, tenths / 10, tenths * 300, 300000 - tenths * 300], expectedOwner, contextValid);
+            [tenths, tenths / 10, tenths * 300, 300000 - tenths * 300], expectedOwner,
+            () => ResolveType(graph, TurnTable) == turn && contextValid?.Invoke() != false, WritablePhase);
     }
 
     private void RequireDeathRatePhase(PointerGraph graph)
@@ -263,13 +266,13 @@ public sealed class R10DataEngine
         WriteTransaction(writes);
     }
 
-    private void WriteFields(PointerGraph graph, int table, int[] offsets, int[] values, uint? expectedOwner = null, Func<bool>? contextValid = null)
+    private void WriteFields(PointerGraph graph, int table, int[] offsets, int[] values, uint? expectedOwner = null, Func<bool>? contextValid = null, Func<bool>? writeAllowed = null)
     {
         if (offsets.Length != values.Length) throw new ArgumentException("写入字段数不匹配。");
         uint owner = ResolveType(graph, table);
         if (expectedOwner.HasValue && owner != expectedOwner.Value) throw new IOException("锁定对象已替换，未写入旧值。");
         var guard = Guard(graph, () => ResolveType(graph, table) == owner && contextValid?.Invoke()!=false);
-        WriteTransaction(offsets.Select((offset, i) => new WriteIntent(Add(owner, offset), Ints(values[i]), guard)).ToArray());
+        WriteTransaction(offsets.Select((offset, i) => new WriteIntent(Add(owner, offset), Ints(values[i]), guard, writeAllowed)).ToArray());
     }
 
     private void WriteSingle(uint address, int value, Func<bool> guard) => WriteTransaction([new(address, Ints(value), guard)]);
@@ -285,15 +288,15 @@ public sealed class R10DataEngine
             for (int i = 0; i < writes.Count; i++)
             {
                 var write = writes[i];
-                if (!write.Guard()) throw new IOException("预检时游戏对象已改变。");
+                if (!write.CanWrite()) throw new IOException("预检时游戏对象或可写阶段已改变。");
                 before[i] = _memory.Read(write.Address, write.Bytes.Length);
             }
             for (int i = 0; i < writes.Count; i++)
             {
                 var write = writes[i];
                 if (before[i].AsSpan().SequenceEqual(write.Bytes)) continue;
-                if (!write.Guard() || !_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(before[i]))
-                    throw new IOException("写入前对象或数值已改变。");
+                if (!write.CanWrite() || !_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(before[i]))
+                    throw new IOException("写入前对象、数值或可写阶段已改变。");
                 attempted.Add(i); // Includes partial writes and failures from the native adapter.
                 Exception? writeError = null;
                 try { _memory.Write(write.Address, write.Bytes); completed[i] = true; }
@@ -302,11 +305,11 @@ public sealed class R10DataEngine
                 try { observed = _memory.Read(write.Address, write.Bytes.Length); }
                 catch (Exception ex) when (IsMemoryFailure(ex)) { writeError ??= ex; }
                 if (writeError is not null) throw new IOException("写入或回读失败。", writeError);
-                if (observed is null || !observed.AsSpan().SequenceEqual(write.Bytes) || !write.Guard())
+                if (observed is null || !observed.AsSpan().SequenceEqual(write.Bytes) || !write.CanWrite())
                     throw new IOException("写入结果或对象身份校验失败。");
             }
             foreach (var write in writes)
-                if (!write.Guard() || !_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(write.Bytes))
+                if (!write.CanWrite() || !_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(write.Bytes))
                     throw new IOException("批量写入最终校验失败。");
         }
         catch (Exception ex) when (IsMemoryFailure(ex))
@@ -324,6 +327,9 @@ public sealed class R10DataEngine
                     // Only a completed write still containing our exact target is eligible.
                     if (!completed[i] || !current.AsSpan().SequenceEqual(write.Bytes))
                         throw new IOException("存在第三方修改或未知写入结果。");
+                    // Restoration is itself a write: re-evaluate phase now, independently of
+                    // ownership. A forbidden phase must not be bypassed by the rollback path.
+                    if (write.WriteAllowed?.Invoke() == false) throw new IOException("当前阶段不允许恢复写入。");
                     _memory.Write(write.Address, before[i]);
                     if (!_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(before[i]) || !write.Guard())
                         throw new IOException("恢复后校验失败。");
@@ -435,5 +441,8 @@ public sealed class R10DataEngine
     private static bool IsMemoryFailure(Exception ex) => ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or OverflowException;
     private sealed record PointerGraph(uint Module, uint Root, uint PointerBase, uint Offsets);
     private sealed record SceneOwners(uint Turn, uint Party, uint Maximum, uint Campaign);
-    private sealed record WriteIntent(uint Address, byte[] Bytes, Func<bool> Guard);
+    private sealed record WriteIntent(uint Address, byte[] Bytes, Func<bool> Guard, Func<bool>? WriteAllowed = null)
+    {
+        public bool CanWrite() => Guard() && WriteAllowed?.Invoke() != false;
+    }
 }

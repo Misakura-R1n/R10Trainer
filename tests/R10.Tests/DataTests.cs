@@ -93,6 +93,24 @@ public static class DataTests
             Check(f.Engine.MaintainLock(locked), "Phase pause discarded lock");
             Check(f.Memory.Int(f.Campaign + 0x94) == 125, "Original target not preserved across phase pause");
         });
+        test("data: death-rate batch stops when phase changes without rollback into forbidden phase", () =>
+        {
+            foreach (bool locked in new[] { false, true })
+            foreach (uint stopOffset in new[] { 0x94u, 0x88u })
+            {
+                var f = new DataFixture(); f.Engine.Refresh();
+                var target = f.Engine.CaptureLock(FeatureId.DeathRate);
+                if (locked) // Capture 12.5%, then change all four values so lock maintenance writes them.
+                    foreach (var (offset, value) in new[] { (0x94u, 500), (0x90u, 50), (0x88u, 150000), (0x84u, 150000) })
+                        f.Memory.Put(f.Campaign + offset, value);
+                int originalLast = f.Memory.Int(f.Campaign + 0x84);
+                f.Memory.BeforeWrite = (address, _) => { if (address == f.Campaign + stopOffset) f.Memory.Put(f.Turn + 12, 16); };
+                var error = Expect<DataWriteException>(() => { if (locked) f.Engine.MaintainLock(target); else f.Engine.WriteValue(FeatureId.DeathRate, 50); });
+                Check(!error.RollbackComplete, "Forbidden phase falsely reported as safely restored");
+                Check(f.Memory.Writes.Count == (stopOffset == 0x94 ? 1 : 3), "Continued writes or rolled back during forbidden phase");
+                Check(f.Memory.Int(f.Campaign + 0x84) == originalLast && f.Memory.Int(f.Campaign + 0x8C) == 123456, "Remaining field or stage cache changed");
+            }
+        });
         test("data: army locks retain four independent values", () =>
         {
             var f = new DataFixture(); f.Engine.Refresh(); var locked = f.Engine.CaptureLock(FeatureId.Army);
