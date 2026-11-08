@@ -25,6 +25,8 @@ static class UnifiedRuntimeTests
             Check((await runtime.SetToggleAsync(FeatureId.Hp, true)).Success);
             Check((await runtime.SetToggleAsync(FeatureId.Hp, false)).Success);
             Check((await runtime.SetToggleAsync(FeatureId.NoDuplicateCards, true)).Success);
+            Check((await runtime.SetToggleAsync(FeatureId.Redraw, true)).Success);
+            Check((await runtime.SetToggleAsync(FeatureId.Redistribute, true)).Success);
             Check(!(await runtime.SetValueAsync(FeatureId.NoDuplicateCards, 10)).Success);
             Check(!(await runtime.SetLockAsync(FeatureId.NoDuplicateCards, true)).Success);
             Check(!(await runtime.SetValueAsync(FeatureId.Hp, 10)).Success);
@@ -33,7 +35,7 @@ static class UnifiedRuntimeTests
             Check((await runtime.SetValueAsync(FeatureId.Food, 3)).Success);
             Check((await runtime.SetLockAsync(FeatureId.Turn, true)).Success);
             Check(memory.Writes.SequenceEqual(new[] { "toggle:EnemyNear:True", "value:Food:3", "lock:Turn:True" }));
-            Check(bridge.Writes.SequenceEqual(new[] { "toggle:Hp:True", "toggle:Hp:False", "toggle:NoDuplicateCards:True" }));
+            Check(bridge.Writes.SequenceEqual(new[] { "toggle:Hp:True", "toggle:Hp:False", "toggle:NoDuplicateCards:True", "toggle:Redraw:True", "toggle:Redistribute:True" }));
             Check((await runtime.TryCloseAsync()).Success && memory.Closes == 1 && bridge.Closes == 1);
         });
         await test("unified original game keeps other features and never falls back to HP healing", async () =>

@@ -1,6 +1,7 @@
 LIBRARY R10Bridge.dll
 EXPORTS
     Cards
-Control
+    Control
+    Feature
     Tick
     FilterHp

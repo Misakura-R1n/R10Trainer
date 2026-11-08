@@ -12,6 +12,7 @@ typedef struct {
     LONG blockedHits, lastRequestedHp, lastCommandId, lastCommandState;
     LONG pendingId, nextId;
     LONG noDuplicateCards, cardBatch, cardBatchEnabled, filteredCards, fallbackCards;
+    LONG foodRedraw, autoRedistribute;
     LONG selector, controlEnabled, battleReady; DWORD battleTick;
     Command commands[HISTORY];
 } State;
@@ -36,6 +37,7 @@ static char *unsignedNumber(char *p, DWORD value) {
 static int equal(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; } return *a == *b;
 }
+static LONG capability(LONG kind) { return kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : 16; }
 static void copy(void *to, const void *from, unsigned n) {
     unsigned char *d = to; const unsigned char *s = from; while (n--) *d++ = *s++;
 }
@@ -98,13 +100,13 @@ static void respond(const char *input, char *out) {
     Request r; State snapshot; char *p; LONG id;
     if (!parse(input,&r)) { errorResponse(out,"invalid_request"); return; }
     if (equal(r.op,"set_feature") || equal(r.op,"action")) {
-        LONG kind=equal(r.op,"action") ? r.action : equal(r.feature,"no_duplicate_cards") ? 5 : 1;
-        if (!equal(r.op,"action") && (r.present != 15 || (!equal(r.feature,"hp_guard") && !equal(r.feature,"no_duplicate_cards")))) { errorResponse(out,"unsupported_feature"); return; }
+        LONG kind=equal(r.op,"action") ? r.action : equal(r.feature,"no_duplicate_cards") ? 5 : equal(r.feature,"food_redraw") ? 6 : equal(r.feature,"auto_redistribute") ? 7 : equal(r.feature,"hp_guard") ? 1 : 0;
+        if (!equal(r.op,"action") && (r.present != 15 || !kind)) { errorResponse(out,"unsupported_feature"); return; }
         if (equal(r.op,"action") && (r.present != 233 || kind<2 || kind>4 ||
             (kind==2 && (r.argument>9998 || r.argument2)) ||
             (kind==3 && (r.argument || r.argument2)) || (kind==4 && (r.argument>6 || r.argument2>1)))) { errorResponse(out,"invalid_action"); return; }
         EnterCriticalSection(&gate);
-        if (state.scriptVersion!=1 || !(state.capabilities & (kind==1 ? 4 : kind==5 ? 32 : 16))) { LeaveCriticalSection(&gate); errorResponse(out,"script_hook_unavailable"); return; }
+        if (state.scriptVersion!=1 || !(state.capabilities & capability(kind))) { LeaveCriticalSection(&gate); errorResponse(out,"script_hook_unavailable"); return; }
         if (r.generation != state.generation) { LeaveCriticalSection(&gate); errorResponse(out,"generation_mismatch"); return; }
         if (state.phase != 1 || GetTickCount()-state.lastTick > 2000) { LeaveCriticalSection(&gate); errorResponse(out,"game_not_ready"); return; }
         if (kind>=3 && kind<=4 && (!state.battleReady || GetTickCount()-state.battleTick>250)) { LeaveCriticalSection(&gate); errorResponse(out,"battle_controls_unavailable"); return; }
@@ -137,6 +139,8 @@ static void respond(const char *input, char *out) {
     p=field(p,",\"loadKind\":",snapshot.loadKind); p=field(p,",\"loadSlot\":",snapshot.loadSlot);
     p=field(p,",\"lastCompletedGeneration\":",snapshot.lastCompletedGeneration); p=field(p,",\"lastLoadOutcome\":",snapshot.lastLoadOutcome);
     p=put(p,snapshot.noDuplicateCards ? ",\"noDuplicateCards\":true" : ",\"noDuplicateCards\":false");
+    p=put(p,snapshot.foodRedraw ? ",\"foodRedraw\":true" : ",\"foodRedraw\":false");
+    p=put(p,snapshot.autoRedistribute ? ",\"autoRedistribute\":true" : ",\"autoRedistribute\":false");
     p=field(p,",\"filteredCards\":",snapshot.filteredCards); p=field(p,",\"fallbackCards\":",snapshot.fallbackCards);
     p=put(p,snapshot.hpGuard ? ",\"hpGuard\":true" : ",\"hpGuard\":false");
     p=put(p,",\"playerHp\":"); p=snapshot.playerHp < 0 ? put(p,"null") : number(p,snapshot.playerHp);
@@ -228,8 +232,10 @@ int __cdecl Tick(int marker,int a,int b) {
     else if (marker==20) { state.selector=a; state.controlEnabled=b; if (!b) state.battleReady=0; }
     if (marker==1 && state.pendingId) {
         Command *c=&state.commands[state.pendingId % HISTORY];
-        if (c->generation!=state.generation || state.phase!=1 || state.scriptVersion!=1 || !(state.capabilities & (c->kind==1 ? 4 : c->kind==5 ? 32 : 16)) || GetTickCount()-c->submitted>3000) c->state=3;
+        if (c->generation!=state.generation || state.phase!=1 || state.scriptVersion!=1 || !(state.capabilities & capability(c->kind)) || GetTickCount()-c->submitted>3000) c->state=3;
         else if (c->kind==5) { state.noDuplicateCards=c->enabled; c->state=2; }
+        else if (c->kind==6) { state.foodRedraw=c->enabled; c->state=2; }
+        else if (c->kind==7) { state.autoRedistribute=c->enabled; c->state=2; }
         else if (c->kind==1 && state.scriptVersion==1 && (state.capabilities & 4)) { state.hpGuard=c->enabled; c->state=2; }
         if (c->state!=1) { state.lastCommandState=c->state; state.pendingId=0; }
     }
@@ -265,6 +271,15 @@ int __cdecl FilterHp(int side,int oldHp,int requestedHp) {
     LeaveCriticalSection(&gate); return result;
 }
 BOOL WINAPI DllMain(HINSTANCE instance,DWORD reason,LPVOID reserved) { (void)instance;(void)reason;(void)reserved;return TRUE; }
+
+int __cdecl Feature(int kind,int a,int b) {
+    (void)a; (void)b;
+    if (initialized!=2 || GetCurrentThreadId()!=state.gameThreadId) return 0;
+    EnterCriticalSection(&gate);
+    int result=state.phase==1 && state.scriptVersion==1 && (state.capabilities & capability(kind)) &&
+        ((kind==6 && state.foodRedraw) || (kind==7 && state.autoRedistribute));
+    LeaveCriticalSection(&gate); return result;
+}
 
 /* Borrowed only for the synchronous CreateCard call; all array access stays in AIN. */
 int __cdecl Cards(int op,int a,int b) {

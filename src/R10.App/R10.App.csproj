@@ -9,7 +9,7 @@
     <AssemblyName>R10Trainer</AssemblyName>
     <RootNamespace>R10.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
     <Description>兰斯 10 独立修改器</Description>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>

@@ -184,7 +184,7 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
                 case "set_feature":
                     Only(arguments, "feature", "enabled", "generation", "wait_ms", "session");
                     operationSession = RequiredSession(arguments);
-                    if (String(arguments["feature"]) is not ("hp_guard" or "no_duplicate_cards")) throw new ToolParameterException("Unsupported feature");
+                    if (String(arguments["feature"]) is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute")) throw new ToolParameterException("Unsupported feature");
                     if (arguments["enabled"] is not JsonValue enabledNode || !enabledNode.TryGetValue<bool>(out var enabled))
                         throw new ToolParameterException("enabled must be boolean");
                     var generation = PositiveInteger(arguments, "generation", allowZero: true);
@@ -263,8 +263,8 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
             annotations = new { readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false } },
         new { name = "get_state", description = "Read the selected R10 native bridge snapshot. Missing HP is null; readiness and live transport do not prove gameplay effect.",
             inputSchema = Schema(new { }), outputSchema = OutputSchema(), annotations = new { readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false } },
-        new { name = "set_feature", description = "Queue hp_guard or no_duplicate_cards in the supplied process session and load generation; requires the corresponding state.hpGuardAvailable or state.noDuplicateCardsAvailable capability. Card changes apply to the next reward batch. queued is not applied. wait_ms polls the same ID and session, never resubmits.",
-            inputSchema = Schema(new { session = new { type = "string", minLength = 1 }, feature = new { type = "string", @enum = new[] { "hp_guard", "no_duplicate_cards" } }, enabled = new { type = "boolean" }, generation = new { type = "integer", minimum = 0 }, wait_ms = new { type = "integer", minimum = 0, maximum = 5000, @default = 0 } }, "session", "feature", "enabled", "generation"),
+        new { name = "set_feature", description = "Queue a component feature in the supplied process session and load generation; requires its corresponding availability capability in get_state. Card changes apply to the next reward batch. queued is not applied. wait_ms polls the same ID and session, never resubmits.",
+            inputSchema = Schema(new { session = new { type = "string", minLength = 1 }, feature = new { type = "string", @enum = new[] { "hp_guard", "no_duplicate_cards", "food_redraw", "auto_redistribute" } }, enabled = new { type = "boolean" }, generation = new { type = "integer", minimum = 0 }, wait_ms = new { type = "integer", minimum = 0, maximum = 5000, @default = 0 } }, "session", "feature", "enabled", "generation"),
             outputSchema = OutputSchema(), annotations = new { readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false } },
         new { name = "get_command_result", description = "Read one of the native bridge's last 16 command results. command_not_found does not mean the command never ran.",
             inputSchema = Schema(new { session = new { type = "string", minLength = 1 }, id = new { type = "integer", minimum = 1 } }, "session", "id"), outputSchema = OutputSchema(),

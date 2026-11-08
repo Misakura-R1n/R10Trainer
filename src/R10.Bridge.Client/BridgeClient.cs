@@ -33,7 +33,7 @@ public sealed class BridgeClient : IBridgeClient
             NullableInteger(response, "scriptVersion"), NullableInteger(response, "capabilities"),
             NullableNonnegativeInteger(response, "loadKind"), NullableInteger(response, "loadSlot"),
             NullableNonnegativeInteger(response, "lastCompletedGeneration"), NullableNonnegativeInteger(response, "lastLoadOutcome"))
-        { NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True };
+        { FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True };
     }
 
     public async Task<BridgeCommand> ActionForSessionAsync(string session, int action, int argument, int argument2, long generation, CancellationToken cancellationToken = default)
@@ -51,7 +51,7 @@ public sealed class BridgeClient : IBridgeClient
 
     public async Task<BridgeCommand> SetFeatureAsync(string feature, bool enabled, long generation, CancellationToken cancellationToken = default)
     {
-        if (feature is not ("hp_guard" or "no_duplicate_cards")) throw new BridgeException("unsupported_feature", "Unsupported bridge feature.");
+        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute")) throw new BridgeException("unsupported_feature", "Unsupported bridge feature.");
         if (generation < 0) throw new ArgumentOutOfRangeException(nameof(generation));
         var response = await ExchangeAsync(new { op = "set_feature", feature, enabled, generation }, true, cancellationToken).ConfigureAwait(false);
         try { return ParseCommand(response); }

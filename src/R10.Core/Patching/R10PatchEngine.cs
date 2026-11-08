@@ -222,10 +222,11 @@ public sealed class R10PatchEngine
     {
         if (_verified) return;
         string fingerprint = _fingerprint();
+        if (string.Equals(fingerprint, GameConnection.SupportedBridgeAinFingerprint, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("已安装组件的食券重抽和自动战斗重配必须通过组件开关控制，不修改运行中的脚本。");
         if (!GameConnection.IsSupportedAinFingerprint(fingerprint))
             throw new InvalidOperationException("此 Rance10.ain 不属于首版支持的中文 BugFix 版本，脚本功能未启用。");
-        _codeLength = string.Equals(fingerprint, GameConnection.SupportedBridgeAinFingerprint, StringComparison.OrdinalIgnoreCase)
-            ? GameConnection.SupportedBridgeCodeLength : BugFixProfile.CodeLength;
+        _codeLength = BugFixProfile.CodeLength;
         _verified = true;
     }
     private void RequireSession()

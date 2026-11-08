@@ -6,6 +6,17 @@ static class RuntimeTests
 {
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("script branch capabilities and independent close ownership", async () =>
+        {
+            var client=new RuntimeFixture(); var runtime=new BridgeTrainerRuntime(client);
+            Check(!(await runtime.SetToggleAsync(FeatureId.Redraw,true)).Success && client.Writes.Count==0);
+            client.State=client.State with { Capabilities=239 };
+            Check((await runtime.SetToggleAsync(FeatureId.Redraw,true)).Success && runtime.Current.Features[FeatureId.Redraw].Active);
+            Check((await runtime.SetToggleAsync(FeatureId.Redistribute,true)).Success && runtime.Current.Features[FeatureId.Redistribute].Active);
+            Check((await runtime.SetToggleAsync(FeatureId.Redraw,false)).Success && runtime.Current.Features[FeatureId.Redistribute].Active);
+            Check((await runtime.TryCloseAsync()).Success);
+            Check(client.FeatureWrites.SequenceEqual(new[]{"food_redraw:True","auto_redistribute:True","food_redraw:False","auto_redistribute:False"}));
+        });
         await test("card capability, ownership and HP close independently", async () =>
         {
             var client=new RuntimeFixture(); var runtime=new BridgeTrainerRuntime(client);
@@ -178,7 +189,10 @@ static class RuntimeTests
             if (session != Session) throw new BridgeException("session_changed", "fixture restarted");
             FeatureWrites.Add(feature+":"+enabled); Writes.Add(enabled);
             if (Set is not null) return Set(enabled, cancellationToken);
-            State = State with { HpGuard = enabled };
+            State = feature switch {
+                "hp_guard"=>State with { HpGuard=enabled }, "no_duplicate_cards"=>State with { NoDuplicateCards=enabled },
+                "food_redraw"=>State with { FoodRedraw=enabled }, "auto_redistribute"=>State with { AutoRedistribute=enabled },
+                _=>throw new InvalidOperationException("Unknown fixture feature") };
             return Task.FromResult(new BridgeCommand(Writes.Count, "applied"));
         }
         public Task<BridgeCommand> GetCommandResultForSessionAsync(string session, long id, CancellationToken cancellationToken = default) =>

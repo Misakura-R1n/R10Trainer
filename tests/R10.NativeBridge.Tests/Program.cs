@@ -88,6 +88,20 @@ internal static class Program
         var cardState=Request("{\"op\":\"get_state\"}");
         Check(cardState.GetProperty("noDuplicateCards").GetBoolean() && cardState.GetProperty("filteredCards").GetInt32()==1 && cardState.GetProperty("fallbackCards").GetInt32()==1,"card telemetry is separate from HP");
         tick(2,1,5005); Check(cards(0,0,0)==0 && cards(3,0,0)==-1,"load invalidates borrowed array handle");
+        tick(3,1,0); tick(1,16,16);
+        var feature=Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Feature"));
+        string SetFeature(string name,bool enabled,int gen=4) => JsonSerializer.Serialize(new {op="set_feature",feature=name,enabled,generation=gen});
+        Check(Request(SetFeature("food_redraw",true)).GetProperty("error").GetString()=="script_hook_unavailable","old script rejects new branch switches");
+        tick(0,1,255); tick(1,16,16);
+        Request(SetFeature("food_redraw",true)); Check(feature(6,0,0)==0,"queued redraw does not alter script branch");
+        tick(1,16,16); Check(feature(6,0,0)==1 && feature(7,0,0)==0,"redraw enabled independently");
+        Check(Task.Run(()=>feature(6,0,0)).GetAwaiter().GetResult()==0,"background thread cannot query script feature");
+        Request(SetFeature("auto_redistribute",true)); tick(1,16,16);
+        Request(SetFeature("food_redraw",false)); tick(1,16,16);
+        Check(feature(6,0,0)==0 && feature(7,0,0)==1,"disabling redraw preserves redistribution");
+        tick(2,1,5005); Check(feature(7,0,0)==0,"loading suspends branch switches");
+        Check(Request(SetFeature("auto_redistribute",false)).GetProperty("error").GetString()=="generation_mismatch","old generation cannot change branch switches");
+        tick(3,1,0); tick(0,1,63); Check(feature(7,0,0)==0,"removed capability cannot retain active script effect");
         Console.WriteLine($"{checks-failed} passed, {failed} failed native helper checks; simulation=true; this is not a game compatibility test.");
         return failed==0 ? 0 : 1;
     }

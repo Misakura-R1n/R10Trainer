@@ -27,6 +27,10 @@ public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, lon
     public string? Session { get; init; }
     public bool BattleReady { get; init; }
     public bool NoDuplicateCards { get; init; }
+    public bool FoodRedraw { get; init; }
+    public bool AutoRedistribute { get; init; }
+    public bool FoodRedrawAvailable => (Capabilities.GetValueOrDefault() & 64) != 0;
+    public bool AutoRedistributeAvailable => (Capabilities.GetValueOrDefault() & 128) != 0;
     public long? FilteredCards { get; init; }
     public long? FallbackCards { get; init; }
     public bool NoDuplicateCardsAvailable => (Capabilities.GetValueOrDefault() & 32) != 0;

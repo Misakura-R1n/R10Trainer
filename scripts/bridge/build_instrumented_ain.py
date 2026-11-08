@@ -263,7 +263,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     extended = bytearray(code[:-6])  # move terminal FUNC 0 after the appended prefixes
     report_hooks, listing, added_functions, code_edits = [], [], [], []
     hooks = [dict(hook) for hook in HOOKS]
-    capabilities = 63 if profile == "controls" else 47 if profile == "full" else 1
+    capabilities = 255 if profile == "controls" else 239 if profile == "full" else 1
     hooks[0]["tickArguments"] = [("const", 1), ("const", capabilities)]
     redirected = set()
 
@@ -358,6 +358,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     if profile in {"full", "controls"}:
         from cards_ain import install_cards
         install_cards(add_function, replace_code, code, instruction)
+        from feature_ain import install_features
+        install_features(add_function, replace_code, instruction)
 
     if profile == "controls":
         from controls_ain import install_controls
@@ -391,7 +393,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))
-    declaration = b"R10Bridge\0" + i32(4 if profile in {"full", "controls"} else 1) + b"Tick\0" + i32(10) + i32(3)
+    declaration = b"R10Bridge\0" + i32(5 if profile in {"full", "controls"} else 1) + b"Tick\0" + i32(10) + i32(3)
     declaration += b"marker\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     if profile in {"full", "controls"}:
         declaration += b"FilterHp\0" + i32(10) + i32(3)
@@ -400,6 +402,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         declaration += b"Control\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     if profile in {"full", "controls"}:
         declaration += b"Cards\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
+        declaration += b"Feature\0" + i32(10) + i32(3) + b"kind\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     hll = b"HLL0" + i32(len(libraries) + 1) + sections["HLL0"][8:] + declaration
     updated = {**sections, "CODE": b"CODE" + i32(len(extended)) + extended, "FUNC": bytes(func), "HLL0": hll}
     # Verify narrow mutations independently of byte serialization and preserve all text/metadata.

@@ -6,6 +6,12 @@ namespace R10.Bridge.Runtime;
 /// <summary>Explicit bridge mode. It never falls back to process-memory writes.</summary>
 public sealed class BridgeTrainerRuntime : ITrainerRuntime
 {
+    internal static readonly IReadOnlyDictionary<FeatureId, (string Name, int Capability)> ComponentFeatures =
+        new Dictionary<FeatureId, (string, int)>
+        {
+            [FeatureId.Hp] = ("hp_guard", 4), [FeatureId.NoDuplicateCards] = ("no_duplicate_cards", 32),
+            [FeatureId.Redraw] = ("food_redraw", 64), [FeatureId.Redistribute] = ("auto_redistribute", 128)
+        };
     private readonly IBridgeClient _client;
     private readonly SemaphoreSlim _gate = new(1);
     private readonly CancellationTokenSource _stop = new();
@@ -28,7 +34,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
 
     public async Task<OperationResult> SetToggleAsync(FeatureId id,bool enabled)
     {
-        if (id is not (FeatureId.Hp or FeatureId.NoDuplicateCards)) return OperationResult.Fail("此功能未接入游戏组件。");
+        if (!ComponentFeatures.ContainsKey(id)) return OperationResult.Fail("此功能未接入游戏组件。");
         if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在确认桥接关闭，请稍后再操作。");
         await _gate.WaitAsync().ConfigureAwait(false);
         bool previouslyOwned=_owned.Contains(id);
@@ -88,7 +94,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
     private async Task<BridgeCommand> ChangeFeatureAsync(BridgeState state,FeatureId id,bool enabled)
     {
         if (state.Session is null) throw new BridgeException("session_required","桥接未提供进程会话标识。");
-        var command=await _client.SetFeatureForSessionAsync(state.Session,id==FeatureId.Hp ? "hp_guard" : "no_duplicate_cards",enabled,state.LoadGeneration).ConfigureAwait(false);
+        var command=await _client.SetFeatureForSessionAsync(state.Session,ComponentFeatures[id].Name,enabled,state.LoadGeneration).ConfigureAwait(false);
         using var deadline=new CancellationTokenSource(TimeSpan.FromMilliseconds(2500));
         try
         {
@@ -142,12 +148,19 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
         features[FeatureId.NoDuplicateCards]=new(Requested:state.NoDuplicateCards,Active:state.NoDuplicateCards && cardsReady,CanEdit:cardsReady,
             Detail:cardsReady ? $"已排除 {state.FilteredCards ?? 0} 个候选；餐券补位 {state.FallbackCards ?? 0} 次。下一批奖励生效。" : "请安装新版游戏组件并重新启动游戏。",
             Help:FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help,ActiveDescription:"游戏线程已应用开关；固定奖励和消耗型奖励保留原规则。");
-        var connection=state.Phase!=1 ? ConnectionState.Loading : state.HeartbeatAgeMs is null or <0 or >2000 ? ConnectionState.Error : ready || cardsReady ? ConnectionState.Ready : ConnectionState.Unsupported;
+        foreach (var id in new[] { FeatureId.Redraw, FeatureId.Redistribute })
+        {
+            bool available=CanWrite(state,id), enabled=id==FeatureId.Redraw ? state.FoodRedraw : state.AutoRedistribute;
+            features[id]=new(Requested:enabled,Active:enabled && available,CanEdit:available,
+                Detail:available ? "游戏线程控制脚本分支，无需扫描或改写运行中的指令。" : "请安装新版游戏组件并重新启动游戏。",
+                Help:FeatureCatalog.Get(id).Help,ActiveDescription:"游戏线程已应用开关；具体玩法验证范围见说明。");
+        }
+        var connection=state.Phase!=1 ? ConnectionState.Loading : state.HeartbeatAgeMs is null or <0 or >2000 ? ConnectionState.Error : ComponentFeatures.Keys.Any(id=>CanWrite(state,id)) ? ConnectionState.Ready : ConnectionState.Unsupported;
         Publish(new(connection,$"桥接 · PID {state.Pid} · 读档 {state.LoadGeneration}",state.Pid,_client.IsSimulation,features,
             connection==ConnectionState.Error ? "游戏线程心跳未知或暂停，已停用操作。" : connection==ConnectionState.Unsupported ? "当前脚本尚未提供兼容的组件功能入口。" : null,"bridge",
             "组件提供 HP 保护、随机掉落去重与状态读取。"));
     }
-    private static bool CanWrite(BridgeState state,FeatureId id=FeatureId.Hp) => state.Phase==1 && state.ScriptVersion==1 && (state.Capabilities.GetValueOrDefault() & (id==FeatureId.Hp ? 4 : 32))!=0 && state.HeartbeatAgeMs is >=0 and <=2000;
+    private static bool CanWrite(BridgeState state,FeatureId id=FeatureId.Hp) => state.Phase==1 && state.ScriptVersion==1 && ComponentFeatures.TryGetValue(id,out var feature) && (state.Capabilities.GetValueOrDefault() & feature.Capability)!=0 && state.HeartbeatAgeMs is >=0 and <=2000;
     private static Dictionary<FeatureId,FeatureObservation> EmptyFeatures() => FeatureCatalog.All.ToDictionary(x=>x.Id,_=>new FeatureObservation(Detail:"此功能尚未接入桥接模式。"));
     private void PublishError(BridgeException error)
     {

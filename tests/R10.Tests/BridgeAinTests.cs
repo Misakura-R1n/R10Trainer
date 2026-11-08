@@ -29,33 +29,20 @@ internal static class BridgeAinTests
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         });
-        test("bridge actual CODE locates both script features and restores every byte", () =>
+        test("component CODE rejects external operand patches before scanning or writing", () =>
         {
             using var memory = new CodeMemory(ReadCode(path));
             byte[] original = (byte[])memory.Image.Clone();
-            var engine = new R10PatchEngine(memory, path);
-            engine.SetRequested(FeatureId.Redraw, true);
-            engine.SetRequested(FeatureId.Redistribute, true);
-            for (int i = 0; i < 5000 && !engine.Observations.Values.All(value => value.Active); i++) engine.Maintain();
-            Require(engine.Observations.Values.All(value => value.Active) && memory.Writes == 3 && engine.HasRecoveryDebt);
-            engine.RestoreAll();
-            Require(!engine.HasRecoveryDebt && memory.Writes == 6 && memory.Image.AsSpan().SequenceEqual(original));
-        });
-        test("bridge CODE recovery retains debt while appended tail still exists", () =>
-        {
-            using var memory = new CodeMemory(ReadCode(path));
-            var engine = new R10PatchEngine(memory, path);
-            engine.SetRequested(FeatureId.Redistribute, true);
-            for (int i = 0; i < 5000 && !engine.Observations[FeatureId.Redistribute].Active; i++) engine.Maintain();
-            Require(engine.HasRecoveryDebt && memory.Writes == 1);
-            memory.Regions = [new(memory.CodeBase, BugFixProfile.CodeLength, 0x10000, 0, 0),
-                new(memory.CodeBase + BugFixProfile.CodeLength, GameConnection.SupportedBridgeCodeLength - BugFixProfile.CodeLength, 0x2000, 0, 0)];
-            bool failed = false;
-            try { engine.RestoreAll(); } catch (InvalidOperationException) { failed = true; }
-            Require(failed && engine.HasRecoveryDebt && memory.Writes == 1);
-            memory.Regions = [new(memory.CodeBase, GameConnection.SupportedBridgeCodeLength, 0x10000, 0, 0)];
-            engine.RestoreAll();
-            Require(!engine.HasRecoveryDebt && memory.Writes == 1);
+            foreach (var feature in new[] { FeatureId.Redraw, FeatureId.Redistribute })
+            {
+                var engine = new R10PatchEngine(memory, path);
+                engine.SetRequested(feature, true);
+                bool rejected = false;
+                try { engine.Maintain(); } catch (InvalidOperationException) { rejected = true; }
+                Require(rejected && !engine.IsLocating && !engine.HasRecoveryDebt && memory.Writes == 0);
+                engine.RestoreAll();
+            }
+            Require(memory.Image.AsSpan().SequenceEqual(original));
         });
     }
     private static void Require(bool value) { if (!value) throw new InvalidOperationException("Bridge AIN fixture assertion failed"); }

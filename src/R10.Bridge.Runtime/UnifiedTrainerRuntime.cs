@@ -101,7 +101,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
             var memory = pair.Memory.Current;
             var bridge = pair.Bridge.Current;
             if (DifferentProcesses(memory, bridge)) return OperationResult.Fail("游戏进程发生变化，请等待重新连接。");
-            if (id is FeatureId.Hp or FeatureId.NoDuplicateCards)
+            if (BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id))
             {
                 if (!toggle) return OperationResult.Fail("此组件功能仅提供开关操作。");
                 if (!ComponentReady(memory, bridge) || bridge.Features.GetValueOrDefault(id)?.CanEdit != true) return OperationResult.Fail("组件功能尚未就绪，请安装新版组件并启动所选游戏。");
@@ -208,6 +208,12 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
                 var cards = bridge.Features.GetValueOrDefault(FeatureId.NoDuplicateCards) ?? new();
                 features[FeatureId.NoDuplicateCards] = cards with { CanEdit=ready && !_recovering && cards.CanEdit,
                     Active=ready && !_recovering && cards.Active, Help=FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help };
+                foreach (var id in new[] { FeatureId.Redraw, FeatureId.Redistribute })
+                {
+                    var item=bridge.Features.GetValueOrDefault(id) ?? new();
+                    features[id]=item with { CanEdit=ready && !_recovering && item.CanEdit,
+                        Active=ready && !_recovering && item.Active, Help=FeatureCatalog.Get(id).Help };
+                }
                 if (mismatch || _recovering)
                     foreach (var id in features.Keys.ToArray()) features[id] = features[id] with { CanEdit = false, Active = false, LockActive = false };
                 snapshot = memory with
