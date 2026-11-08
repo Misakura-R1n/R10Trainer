@@ -88,6 +88,8 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
     }
 
     public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) => ExecuteAsync(id, false, runtime => runtime.SetValueAsync(id, value));
+    public Task<OperationResult> SetValueForEpochAsync(FeatureId id, decimal value, GameLoadEpoch expected) =>
+        ExecuteAsync(id, false, runtime => runtime.SetValueForEpochAsync(id, value, expected));
     public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => ExecuteAsync(id, false, runtime => runtime.SetLockAsync(id, enabled));
     public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => ExecuteAsync(id, true, runtime => runtime.SetToggleAsync(id, enabled));
 
@@ -227,6 +229,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
                 snapshot = memory with
                 {
                     RuntimeMode = "unified", Features = features,
+                    LoadEpoch = ready && !_recovering && !mismatch ? bridge.LoadEpoch : null,
                     Connection = _recovering ? ConnectionState.RestorePending : mismatch ? ConnectionState.Loading : memory.Connection,
                     Status = _recovering ? "正在恢复修改" : mismatch ? "正在重新连接游戏" : memory.Status,
                     Error = _recoveryError ?? memory.Error,

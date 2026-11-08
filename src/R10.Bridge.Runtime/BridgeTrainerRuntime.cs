@@ -35,7 +35,10 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
     public BridgeTrainerRuntime(string gameDirectory) : this(new DiscoveringBridgeClient(gameDirectory)) { }
     public BridgeTrainerRuntime(IBridgeClient client) => _client=client;
     public Task StartAsync() { lock (_startGate) { if (!_closed) _loop ??= Task.Run(PollAsync); } return Task.CompletedTask; }
-    public async Task<OperationResult> SetValueAsync(FeatureId id,decimal value)
+    public Task<OperationResult> SetValueAsync(FeatureId id,decimal value) => SetValueCoreAsync(id,value,null);
+    public Task<OperationResult> SetValueForEpochAsync(FeatureId id,decimal value,GameLoadEpoch expected) =>
+        SetValueCoreAsync(id,value,expected ?? throw new ArgumentNullException(nameof(expected)));
+    private async Task<OperationResult> SetValueCoreAsync(FeatureId id,decimal value,GameLoadEpoch? expected)
     {
         if (!ValueFeatures.TryGetValue(id,out var feature) || !FeatureCatalog.ValidValue(id,value)) return OperationResult.Fail("数值或功能不受支持。");
         if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在关闭组件连接。");
@@ -45,9 +48,13 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
             if (_closed || Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("组件连接已关闭或正在关闭。");
             var state=await _client.GetStateAsync().ConfigureAwait(false);
             if (!CanWriteData(state) || state.Session is null) return OperationResult.Fail("请安装新版组件并等待游戏数据就绪。");
+            if (expected is not null && (!expected.Ready || expected.ProcessId!=state.Pid ||
+                expected.Session!=state.Session || expected.Generation!=state.LoadGeneration))
+                return OperationResult.Fail("游戏会话或读档状态已变化，请重新确认后应用。");
             if (state.ResourcesFull && id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship)
                 return OperationResult.Fail("请先关闭资源全满，再单独修改此数值。");
-            var command=await _client.SetValueForSessionAsync(state.Session,feature,(int)value,state.LoadGeneration).ConfigureAwait(false);
+            var command=await _client.SetValueForSessionAsync(expected?.Session ?? state.Session,feature,(int)value,
+                expected?.Generation ?? state.LoadGeneration).ConfigureAwait(false);
             command=await AwaitCommandAsync(state.Session,command).ConfigureAwait(false);
             try { await RefreshAsync().ConfigureAwait(false); } catch (BridgeException error) { PublishError(error); }
             return CommandResult(command);

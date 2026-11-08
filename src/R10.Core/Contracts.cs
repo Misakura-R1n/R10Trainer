@@ -60,6 +60,9 @@ public interface ITrainerRuntime
     event Action<TrainerSnapshot>? SnapshotChanged;
     Task StartAsync();
     Task<OperationResult> SetValueAsync(FeatureId id, decimal value);
+    // A delayed confirmation must carry its original authority to the execution boundary.
+    Task<OperationResult> SetValueForEpochAsync(FeatureId id, decimal value, GameLoadEpoch expected) =>
+        Task.FromResult(OperationResult.Fail("此连接不支持绑定读档状态的确认操作。"));
     Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled);
     Task<OperationResult> SetLockAsync(FeatureId id, bool enabled);
     Task<OperationResult> TryCloseAsync();

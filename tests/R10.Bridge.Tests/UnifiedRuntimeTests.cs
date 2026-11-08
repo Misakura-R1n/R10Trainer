@@ -7,6 +7,18 @@ static class UnifiedRuntimeTests
     private static readonly string DirectoryB = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "R10-unified-fixture-b"));
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("unified exposes bridge epoch and preserves confirmation token to selected runtime", async () =>
+        {
+            var epoch=new GameLoadEpoch(42,"fixture:original",3,true);
+            var memory=new Fixture(); var bridge=new Fixture { Current=Snapshot() with { LoadEpoch=epoch } };
+            var runtime=new UnifiedTrainerRuntime(DirectoryA,_=>(memory,bridge));
+            Check(runtime.Current.LoadEpoch==epoch);
+            Check((await runtime.SetValueForEpochAsync(FeatureId.Star,80,epoch)).Success);
+            Check(ReferenceEquals(bridge.Expected,epoch) && memory.Writes.Count==0);
+            bridge.Publish(Snapshot() with { LoadEpoch=epoch with { Generation=4 } });
+            Check(!(await runtime.SetValueForEpochAsync(FeatureId.Star,80,epoch)).Success && bridge.Writes.Count==1);
+            Check((await runtime.TryCloseAsync()).Success);
+        });
         await test("unified forwards load epochs only from selected bridge observations", async () =>
         {
             var memory=new Fixture(); var bridge=new Fixture();
@@ -162,6 +174,12 @@ static class UnifiedRuntimeTests
         public TrainerSnapshot Current { get; set; } = Snapshot();
         public event Action<TrainerSnapshot>? SnapshotChanged;
         public List<string> Writes { get; } = [];
+        public GameLoadEpoch? Expected;
+        public Task<OperationResult> SetValueForEpochAsync(FeatureId id, decimal value, GameLoadEpoch expected)
+        {
+            Expected=expected;
+            return Current.LoadEpoch==expected ? SetValueAsync(id,value) : Task.FromResult(OperationResult.Fail("epoch changed"));
+        }
         public int Starts, Closes;
         public OperationResult CloseResult = OperationResult.Ok;
         public Exception? CloseError;

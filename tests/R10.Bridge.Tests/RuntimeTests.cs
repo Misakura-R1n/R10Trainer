@@ -6,6 +6,23 @@ static class RuntimeTests
 {
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("confirmed value checks original authority after asynchronous state read", async () =>
+        {
+            var expected=new GameLoadEpoch(42,"42:123",3,true);
+            foreach (var changed in new[] { Ready() with { LoadGeneration=4 }, Ready() with { Session="42:456" }, Ready() with { Pid=43 }, Ready() })
+            {
+                var read=new TaskCompletionSource<BridgeState>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var client=new RuntimeFixture { Read=()=>read.Task };
+                var runtime=new BridgeTrainerRuntime(client);
+                var pending=runtime.SetValueForEpochAsync(FeatureId.Star,80,expected);
+                client.State=changed with { Capabilities=495,DataReady=true };
+                read.SetResult(client.State);
+                var result=await pending;
+                bool same=changed.Pid==42 && changed.Session==expected.Session && changed.LoadGeneration==3;
+                Check(result.Success==same && client.ValueWrites.Count==(same ? 1 : 0));
+                Check((await runtime.TryCloseAsync()).Success);
+            }
+        });
         await test("typed data uses game readiness, enforces full exclusion, and closes owned full flag", async () =>
         {
             var client=new RuntimeFixture { State=Ready() with { Capabilities=495,DataReady=true,Food=1,Medal=2,Friendship=0,Unit=50 } };
@@ -197,6 +214,7 @@ static class RuntimeTests
     {
         public BridgeState State { get; set; } = Ready();
         public Exception? ReadError { get; set; }
+        public Func<Task<BridgeState>>? Read { get; set; }
         public Func<bool, CancellationToken, Task<BridgeCommand>>? Set { get; set; }
         public Func<long, CancellationToken, Task<BridgeCommand>>? Result { get; set; }
         public List<string> ValueWrites { get; } = [];
@@ -214,7 +232,7 @@ static class RuntimeTests
         public string? Session => State.Session;
         public bool IsSimulation => true;
         public Task<BridgeState> GetStateAsync(CancellationToken cancellationToken = default) =>
-            ReadError is null ? Task.FromResult(State) : Task.FromException<BridgeState>(ReadError);
+            Read?.Invoke() ?? (ReadError is null ? Task.FromResult(State) : Task.FromException<BridgeState>(ReadError));
         public Task<BridgeCommand> SetFeatureForSessionAsync(string session, string feature, bool enabled, long generation, CancellationToken cancellationToken = default)
         {
             if (session != Session) throw new BridgeException("session_changed", "fixture restarted");

@@ -97,8 +97,20 @@ public sealed class FeatureViewModel : ObservableObject
             _operationError = IsChoice ? "请选择 10、40、80 或 200。" : $"请输入 {Definition.Minimum}～{Definition.Maximum}，步长 {Definition.Step}。";
             RefreshState(); return;
         }
-        if (IsChoice && !await _confirmStar(value)) return;
-        var succeeded = await RunAsync(() => _runtime.SetValueAsync(Id, value));
+        GameLoadEpoch? expected = null;
+        if (IsChoice)
+        {
+            var before = _runtime.Current;
+            expected = before.LoadEpoch;
+            if (!before.IsSimulation && expected is not { Ready: true })
+            { _operationError = "游戏读档状态未确认，请等待连接稳定后重试。"; RefreshState(); return; }
+            if (!await _confirmStar(value)) return;
+            var after = _runtime.Current;
+            if (before.IsSimulation != after.IsSimulation || expected != after.LoadEpoch || before.ProcessId != after.ProcessId)
+            { _operationError = "游戏会话或读档状态已变化，请重新确认后应用。"; RefreshState(); return; }
+        }
+        var succeeded = await RunAsync(() => expected is not null && IsChoice
+            ? _runtime.SetValueForEpochAsync(Id, value, expected) : _runtime.SetValueAsync(Id, value));
         if (succeeded) { _dirty = false; _draft = Format(value); Changed(nameof(Draft)); }
     }
     private async Task<bool> RunAsync(Func<Task<OperationResult>> operation, string successMessage = "数值已应用")

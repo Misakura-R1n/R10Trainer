@@ -274,6 +274,7 @@ if (OperatingSystem.IsWindows())
     });
 }
 await RuntimeTests.Run(Test);
+await ConfirmationTests.Run(Test);
 await ControlTests.Run(Test);
 await UnifiedRuntimeTests.Run(Test);
 Console.WriteLine($"{passed} passed, {failed} failed. All cases use protocol/pipe fixtures; no real game was accessed.");
