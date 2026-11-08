@@ -158,7 +158,10 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
         var connection=state.Phase!=1 ? ConnectionState.Loading : state.HeartbeatAgeMs is null or <0 or >2000 ? ConnectionState.Error : ComponentFeatures.Keys.Any(id=>CanWrite(state,id)) ? ConnectionState.Ready : ConnectionState.Unsupported;
         Publish(new(connection,$"桥接 · PID {state.Pid} · 读档 {state.LoadGeneration}",state.Pid,_client.IsSimulation,features,
             connection==ConnectionState.Error ? "游戏线程心跳未知或暂停，已停用操作。" : connection==ConnectionState.Unsupported ? "当前脚本尚未提供兼容的组件功能入口。" : null,"bridge",
-            "组件提供 HP 保护、随机掉落去重与状态读取。"));
+            "组件提供游戏线程功能与状态读取。") {
+                LoadEpoch=state.Session is { } session && state.ScriptVersion==1 && (state.Capabilities.GetValueOrDefault() & 8)!=0
+                    ? new(state.Pid,session,state.LoadGeneration,state.Phase==1 && state.HeartbeatAgeMs is >=0 and <=2000) : null
+            });
     }
     private static bool CanWrite(BridgeState state,FeatureId id=FeatureId.Hp) => state.Phase==1 && state.ScriptVersion==1 && ComponentFeatures.TryGetValue(id,out var feature) && (state.Capabilities.GetValueOrDefault() & feature.Capability)!=0 && state.HeartbeatAgeMs is >=0 and <=2000;
     private static Dictionary<FeatureId,FeatureObservation> EmptyFeatures() => FeatureCatalog.All.ToDictionary(x=>x.Id,_=>new FeatureObservation(Detail:"此功能尚未接入桥接模式。"));

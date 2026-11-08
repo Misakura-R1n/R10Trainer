@@ -30,6 +30,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
         internal ITrainerRuntime Memory { get; } = memory;
         internal ITrainerRuntime Bridge { get; } = bridge;
         internal Action<TrainerSnapshot>? Changed;
+        internal Action<TrainerSnapshot>? BridgeChanged;
         internal Task<OperationResult>? MemoryClose, BridgeClose;
     }
 
@@ -149,7 +150,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
                 return OperationResult.Fail(message);
             }
             pair.Memory.SnapshotChanged -= pair.Changed;
-            pair.Bridge.SnapshotChanged -= pair.Changed;
+            pair.Bridge.SnapshotChanged -= pair.BridgeChanged;
             return OperationResult.Ok;
         }
         catch (TimeoutException)
@@ -169,8 +170,15 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
         var (memory, bridge) = _factory(path);
         var pair = new Pair(memory, bridge);
         pair.Changed = _ => { lock (_stateGate) { if (!ReferenceEquals(_pair, pair)) return; } Refresh(); };
+        pair.BridgeChanged = snapshot =>
+        {
+            lock (_stateGate) { if (!ReferenceEquals(_pair,pair)) return; }
+            if (memory is IGameLoadObserver observer) observer.ObserveGameLoad(snapshot.LoadEpoch);
+            Refresh();
+        };
+        if (memory is IGameLoadObserver initialObserver) initialObserver.ObserveGameLoad(bridge.Current.LoadEpoch);
         memory.SnapshotChanged += pair.Changed;
-        bridge.SnapshotChanged += pair.Changed;
+        bridge.SnapshotChanged += pair.BridgeChanged;
         return pair;
     }
     private static bool DifferentProcesses(TrainerSnapshot memory, TrainerSnapshot bridge) =>

@@ -9,8 +9,9 @@ public sealed record SceneObservation(long Generation, bool GameplayReady, bool 
 
 public sealed class DataLock
 {
-    internal DataLock(FeatureId id, long generation, uint owner, int[] values)
-    { Id = id; Generation = generation; Owner = owner; Values = Array.AsReadOnly((int[])values.Clone()); }
+    internal DataLock(FeatureId id, long generation, uint owner, int[] values, Func<bool>? contextValid = null)
+    { Id = id; Generation = generation; Owner = owner; Values = Array.AsReadOnly((int[])values.Clone()); ContextValid=contextValid; }
+    internal Func<bool>? ContextValid { get; }
     public FeatureId Id { get; }
     public long Generation { get; }
     public uint Owner { get; }
@@ -196,7 +197,7 @@ public sealed class R10DataEngine
         }
     }
 
-    public DataLock CaptureLock(FeatureId id)
+    public DataLock CaptureLock(FeatureId id, Func<bool>? contextValid = null)
     {
         var graph = RequireGameplay();
         (int table, int[] offsets) = LockLayout(id);
@@ -206,13 +207,14 @@ public sealed class R10DataEngine
         foreach (int value in values)
             CheckRange(value, 0, id == FeatureId.Army ? 99999999 : id == FeatureId.DeathRate ? 1000 : 999, "锁定值");
         var guard = Guard(graph, () => ResolveType(graph, table) == owner);
-        if (!guard()) throw new IOException("捕获锁定值时游戏对象已改变。");
-        return new DataLock(id, _generation, owner, values);
+        if (!guard() || contextValid?.Invoke()==false) throw new IOException("捕获锁定值时游戏对象或读档代次已改变。");
+        return new DataLock(id, _generation, owner, values, contextValid);
     }
 
     public bool MaintainLock(DataLock dataLock)
     {
         ArgumentNullException.ThrowIfNull(dataLock);
+        if (dataLock.ContextValid?.Invoke()==false) return false;
         var scene = Refresh();
         if (scene.Error is not null) throw new IOException(scene.Error);
         if (dataLock.Generation != _generation) return false;
@@ -220,17 +222,17 @@ public sealed class R10DataEngine
         var graph = RequireGraph();
         (int table, int[] offsets) = LockLayout(dataLock.Id);
         if (ReadGraph() != graph || ResolveType(graph, table) != dataLock.Owner) return false;
-        if (dataLock.Id == FeatureId.DeathRate) WriteDeathRate(graph, dataLock.Values[0], dataLock.Owner);
-        else WriteFields(graph, table, offsets, dataLock.Values.ToArray(), dataLock.Owner);
+        if (dataLock.Id == FeatureId.DeathRate) WriteDeathRate(graph, dataLock.Values[0], dataLock.Owner, dataLock.ContextValid);
+        else WriteFields(graph, table, offsets, dataLock.Values.ToArray(), dataLock.Owner, dataLock.ContextValid);
         return true;
     }
 
-    private void WriteDeathRate(PointerGraph graph, int tenths, uint? expectedOwner = null)
+    private void WriteDeathRate(PointerGraph graph, int tenths, uint? expectedOwner = null, Func<bool>? contextValid = null)
     {
         RequireDeathRatePhase(graph);
         // Cumulative R/I/D/L only; stage cache S and historical/script flags are intentionally untouched.
         WriteFields(graph, CampaignTable, [0x94, 0x90, 0x88, 0x84],
-            [tenths, tenths / 10, tenths * 300, 300000 - tenths * 300], expectedOwner);
+            [tenths, tenths / 10, tenths * 300, 300000 - tenths * 300], expectedOwner, contextValid);
     }
 
     private void RequireDeathRatePhase(PointerGraph graph)
@@ -261,12 +263,12 @@ public sealed class R10DataEngine
         WriteTransaction(writes);
     }
 
-    private void WriteFields(PointerGraph graph, int table, int[] offsets, int[] values, uint? expectedOwner = null)
+    private void WriteFields(PointerGraph graph, int table, int[] offsets, int[] values, uint? expectedOwner = null, Func<bool>? contextValid = null)
     {
         if (offsets.Length != values.Length) throw new ArgumentException("写入字段数不匹配。");
         uint owner = ResolveType(graph, table);
         if (expectedOwner.HasValue && owner != expectedOwner.Value) throw new IOException("锁定对象已替换，未写入旧值。");
-        var guard = Guard(graph, () => ResolveType(graph, table) == owner);
+        var guard = Guard(graph, () => ResolveType(graph, table) == owner && contextValid?.Invoke()!=false);
         WriteTransaction(offsets.Select((offset, i) => new WriteIntent(Add(owner, offset), Ints(values[i]), guard)).ToArray());
     }
 

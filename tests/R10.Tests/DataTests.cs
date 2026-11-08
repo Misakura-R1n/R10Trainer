@@ -11,6 +11,25 @@ public static class DataTests
 {
     public static void Run(Action<string, Action> test)
     {
+        test("data: load epoch defeats same-address lock reuse and pauses lost heartbeat", () =>
+        {
+            var f=new DataFixture(); f.Engine.Refresh(); long now=0;
+            var fence=new GameLoadFence(()=>now);
+            var epoch=new GameLoadEpoch(f.Memory.ProcessId,"fixture:1",0,true);
+            fence.Update(epoch);
+            var held=f.Engine.CaptureLock(FeatureId.Army,fence.CaptureGuard(f.Memory.ProcessId));
+            now=1001;
+            Check(!f.Engine.MaintainLock(held) && f.Memory.Writes.Count==0,"Expired observation wrote a lock");
+            fence.Update(epoch); Check(f.Engine.MaintainLock(held),"Same-epoch heartbeat did not recover");
+            fence.Update(epoch with { Generation=1,Ready=false });
+            Check(!f.Engine.MaintainLock(held) && f.Memory.Writes.Count==0,"Same-address reload retained old target");
+            fence.Update(epoch with { Generation=1 });
+            Check(!f.Engine.MaintainLock(held),"Old target resumed after loading");
+            var next=f.Engine.CaptureLock(FeatureId.Army,fence.CaptureGuard(f.Memory.ProcessId));
+            fence.Update(null); Check(!f.Engine.MaintainLock(next),"Lost component fell back to legacy writes");
+            fence.Update(epoch with { Generation=1,Session="fixture:2" });
+            Check(!f.Engine.MaintainLock(next),"New session reused old lock");
+        });
         test("data: valid prologue, mixed armies and honest observations", () =>
         {
             var f = new DataFixture();
@@ -158,6 +177,27 @@ public static class DataTests
             Check(!f.Engine.Refresh().GameplayReady, "Partial read accepted as readiness");
             Expect<InvalidOperationException>(() => f.Engine.WriteValue(FeatureId.Food, 3));
             Check(f.Memory.Writes.Count == 0, "Write after failed readiness");
+        });
+        test("runtime/data: load generation cancels requested lock even when all pointers are reused", () =>
+        {
+            var f=new DataFixture();
+            var runtime=new TrainerRuntime(()=>new GameConnection(f.Memory,"unused-for-data-tests.ain"));
+            var epoch=new GameLoadEpoch(f.Memory.ProcessId,"fixture:1",0,true);
+            try
+            {
+                runtime.ObserveGameLoad(epoch); runtime.StartAsync().GetAwaiter().GetResult();
+                Wait(()=>runtime.Current.Connection==ConnectionState.Ready);
+                runtime.ObserveGameLoad(epoch);
+                Check(runtime.SetLockAsync(FeatureId.Army,true).GetAwaiter().GetResult().Success,"Initial lock rejected");
+                runtime.ObserveGameLoad(epoch with { Generation=1,Ready=false });
+                f.Memory.Put(f.Campaign+0x64,777);
+                Wait(()=>!runtime.Current.Features[FeatureId.Army].LockRequested);
+                runtime.ObserveGameLoad(epoch with { Generation=1 });
+                Check(f.Memory.Int(f.Campaign+0x64)==777 && f.Memory.Writes.Count==0,"Old lock restored pre-load value");
+                Check(runtime.SetLockAsync(FeatureId.Army,true).GetAwaiter().GetResult().Success,"Explicit new lock rejected");
+                Check(runtime.SetLockAsync(FeatureId.Army,false).GetAwaiter().GetResult().Success,"Unlock rejected");
+            }
+            finally { Check(runtime.TryCloseAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult().Success,"Runtime close failed"); }
         });
         test("runtime/data: initial stability and same-PID owner replacement recapture", () =>
         {

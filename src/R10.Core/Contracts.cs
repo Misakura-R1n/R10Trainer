@@ -43,9 +43,12 @@ public sealed record TrainerSnapshot(ConnectionState Connection, string Status, 
     bool IsSimulation, IReadOnlyDictionary<FeatureId, FeatureObservation> Features, string? Error = null,
     string RuntimeMode = "memory", string? Notice = null)
 {
+    public GameLoadEpoch? LoadEpoch { get; init; }
     public static TrainerSnapshot Empty { get; } = new(ConnectionState.Searching, "等待游戏连接", null, false,
         FeatureCatalog.All.ToDictionary(x => x.Id, _ => new FeatureObservation()));
 }
+public sealed record GameLoadEpoch(int ProcessId, string Session, long Generation, bool Ready);
+public interface IGameLoadObserver { void ObserveGameLoad(GameLoadEpoch? epoch); }
 public sealed record OperationResult(bool Success, string? Error = null)
 {
     public static OperationResult Ok { get; } = new(true);

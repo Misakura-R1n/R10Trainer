@@ -8,7 +8,7 @@ using R10.Core.Patching;
 namespace R10.Core;
 
 /// <summary>A single logical worker owns the process, all commands, and every recovery obligation.</summary>
-public sealed class TrainerRuntime : ITrainerRuntime
+public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
 {
     private sealed record Work(Func<OperationResult> Action, TaskCompletionSource<OperationResult> Completion);
     private readonly Channel<Work> _commands = Channel.CreateBounded<Work>(new BoundedChannelOptions(32) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
@@ -16,6 +16,8 @@ public sealed class TrainerRuntime : ITrainerRuntime
     private readonly Func<IProcessMemory, string, R10PatchEngine> _createPatches;
     private readonly Func<long> _clock;
     private readonly Func<int, Task> _waitForWork;
+    private readonly GameLoadFence _loadFence;
+    private long _loadRevision;
     private readonly object _closeGate = new();
     private readonly SemaphoreSlim _wake = new(0, 1);
     private TaskCompletionSource<OperationResult>? _closeCompletion;
@@ -47,7 +49,20 @@ public sealed class TrainerRuntime : ITrainerRuntime
     {
         _discover = connectionFactory; _createPatches = patchFactory;
         _clock = clock ?? (() => Environment.TickCount64);
+        _loadFence = new(_clock);
         _waitForWork = waitForWork ?? WaitForWorkAsync;
+    }
+    public void ObserveGameLoad(GameLoadEpoch? epoch) => _loadFence.Update(epoch);
+    private void ObserveLoadRevision()
+    {
+        long revision=_loadFence.Revision;
+        if (revision==_loadRevision) return;
+        _loadRevision=revision;
+        foreach (var id in new[] { FeatureId.Turn, FeatureId.DeathRate, FeatureId.Army })
+        {
+            if (_lockRequested.GetValueOrDefault(id)) _errors[id]="读档或游戏会话已变化，旧锁定已取消；请确认新值后重新锁定。";
+            _lockRequested[id]=false; _lockActive[id]=false; _locks.Remove(id);
+        }
     }
     public Task StartAsync()
     {
@@ -61,7 +76,7 @@ public sealed class TrainerRuntime : ITrainerRuntime
         if (id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship && IsRequested(FeatureId.Resources))
             throw new InvalidOperationException("请先关闭资源全满，再单独修改此数值。");
         _data!.WriteValue(id, value);
-        if (_lockRequested.GetValueOrDefault(id)) _locks[id] = _data.CaptureLock(id);
+        if (_lockRequested.GetValueOrDefault(id)) _locks[id] = _data.CaptureLock(id,_loadFence.CaptureGuard(_connection!.Memory.ProcessId));
         _values = _data.ReadValues();
     }));
     public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => Queue(() => Execute(id, () =>
@@ -88,7 +103,7 @@ public sealed class TrainerRuntime : ITrainerRuntime
         if (!FeatureCatalog.Get(id).HasLock) throw new ArgumentException("此功能不能锁定。");
         if (!enabled) { _lockRequested[id] = false; _locks.Remove(id); _lockActive[id] = false; return; }
         EnsureReady(id);
-        _locks[id] = _data!.CaptureLock(id); _lockRequested[id] = true; _lockActive[id] = false;
+        _locks[id] = _data!.CaptureLock(id,_loadFence.CaptureGuard(_connection!.Memory.ProcessId)); _lockRequested[id] = true; _lockActive[id] = false;
     }));
     public Task<OperationResult> TryCloseAsync()
     {
@@ -179,6 +194,7 @@ public sealed class TrainerRuntime : ITrainerRuntime
     }
     private void Tick()
     {
+        ObserveLoadRevision();
         long now = _clock();
         if (_connection != null && !_connection.Memory.IsAlive) { DetachExited(); }
         if (_closing) { CloseCore(); return; }
@@ -263,6 +279,7 @@ public sealed class TrainerRuntime : ITrainerRuntime
     }
     private void EnsureReady(FeatureId id)
     {
+        ObserveLoadRevision();
         if (_closing || _connection == null || _data == null) throw new InvalidOperationException("游戏未连接或正在关闭。");
         if (_dataFault != null) throw new InvalidOperationException(_dataFault);
         if (!_connection.Memory.IsAlive) { DetachExited(); throw new InvalidOperationException("游戏已退出。"); }
@@ -284,11 +301,13 @@ public sealed class TrainerRuntime : ITrainerRuntime
     private void MaintainLock(FeatureId id)
     {
         _lockActive[id] = false;
+        ObserveLoadRevision();
+        if (_connection is null || !_loadFence.Allows(_connection.Memory.ProcessId)) return;
         if (_closing || Volatile.Read(ref _closeRequested) != 0) return;
         if (_dataFault != null || !_lockRequested.GetValueOrDefault(id) || !GameplayReady || (id == FeatureId.DeathRate && !_scene!.DeathRateWritable)) return;
         try
         {
-            if (!_locks.TryGetValue(id, out var target)) { _locks[id] = _data!.CaptureLock(id); return; }
+            if (!_locks.TryGetValue(id, out var target)) { _locks[id] = _data!.CaptureLock(id,_loadFence.CaptureGuard(_connection!.Memory.ProcessId)); return; }
             if (!_data!.MaintainLock(target)) { _locks.Remove(id); return; }
             _lockActive[id] = true; _errors.Remove(id);
         }

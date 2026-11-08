@@ -7,6 +7,23 @@ static class UnifiedRuntimeTests
     private static readonly string DirectoryB = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "R10-unified-fixture-b"));
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("unified forwards load epochs only from selected bridge observations", async () =>
+        {
+            var memory=new Fixture(); var bridge=new Fixture();
+            var runtime=new UnifiedTrainerRuntime(DirectoryA,_=>(memory,bridge));
+            var epoch=new GameLoadEpoch(42,"fixture:1",7,true);
+            bridge.Publish(Snapshot() with { LoadEpoch=epoch });
+            Check(memory.LastEpoch==epoch);
+            int observed=memory.EpochObservations;
+            memory.Publish(Snapshot());
+            Check(memory.EpochObservations==observed);
+            bridge.Publish(Snapshot(42,ConnectionState.Error,false));
+            Check(memory.LastEpoch is null);
+            Check((await runtime.TryCloseAsync()).Success);
+            observed=memory.EpochObservations;
+            bridge.Publish(Snapshot() with { LoadEpoch=epoch });
+            Check(memory.EpochObservations==observed);
+        });
         await test("unified unselected never discovers or routes any writes", async () =>
         {
             int created = 0;
@@ -137,8 +154,11 @@ static class UnifiedRuntimeTests
     private static void Check(bool condition) { if (!condition) throw new InvalidOperationException("Unified runtime assertion failed"); }
     private static TrainerSnapshot Snapshot(int? pid = 42, ConnectionState connection = ConnectionState.Ready, bool ready = true) =>
         new(connection, "fixture", pid, true, FeatureCatalog.All.ToDictionary(feature => feature.Id, _ => new FeatureObservation(CanEdit: ready)));
-    private sealed class Fixture : ITrainerRuntime
+    private sealed class Fixture : ITrainerRuntime, IGameLoadObserver
     {
+        public GameLoadEpoch? LastEpoch { get; private set; }
+        public int EpochObservations { get; private set; }
+        public void ObserveGameLoad(GameLoadEpoch? epoch) { LastEpoch=epoch; EpochObservations++; }
         public TrainerSnapshot Current { get; set; } = Snapshot();
         public event Action<TrainerSnapshot>? SnapshotChanged;
         public List<string> Writes { get; } = [];
