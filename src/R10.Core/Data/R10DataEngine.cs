@@ -277,7 +277,7 @@ public sealed class R10DataEngine
     private void WriteTransaction(IReadOnlyList<WriteIntent> writes)
     {
         var before = new byte[writes.Count][];
-        var observed = new byte[]?[writes.Count];
+        var completed = new bool[writes.Count];
         var attempted = new List<int>();
         try
         {
@@ -296,12 +296,13 @@ public sealed class R10DataEngine
                     throw new IOException("写入前对象或数值已改变。");
                 attempted.Add(i); // Includes partial writes and failures from the native adapter.
                 Exception? writeError = null;
-                try { _memory.Write(write.Address, write.Bytes); }
+                try { _memory.Write(write.Address, write.Bytes); completed[i] = true; }
                 catch (Exception ex) when (IsMemoryFailure(ex)) { writeError = ex; }
-                try { observed[i] = _memory.Read(write.Address, write.Bytes.Length); }
+                byte[]? observed = null;
+                try { observed = _memory.Read(write.Address, write.Bytes.Length); }
                 catch (Exception ex) when (IsMemoryFailure(ex)) { writeError ??= ex; }
                 if (writeError is not null) throw new IOException("写入或回读失败。", writeError);
-                if (observed[i] is null || !observed[i]!.AsSpan().SequenceEqual(write.Bytes) || !write.Guard())
+                if (observed is null || !observed.AsSpan().SequenceEqual(write.Bytes) || !write.Guard())
                     throw new IOException("写入结果或对象身份校验失败。");
             }
             foreach (var write in writes)
@@ -319,7 +320,9 @@ public sealed class R10DataEngine
                     if (!write.Guard()) throw new IOException("原对象身份不明。");
                     byte[] current = _memory.Read(write.Address, write.Bytes.Length);
                     if (current.AsSpan().SequenceEqual(before[i])) continue;
-                    if (observed[i] is null || !current.AsSpan().SequenceEqual(observed[i]))
+                    // A failed/partial native write cannot establish ownership of its readback.
+                    // Only a completed write still containing our exact target is eligible.
+                    if (!completed[i] || !current.AsSpan().SequenceEqual(write.Bytes))
                         throw new IOException("存在第三方修改或未知写入结果。");
                     _memory.Write(write.Address, before[i]);
                     if (!_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(before[i]) || !write.Guard())

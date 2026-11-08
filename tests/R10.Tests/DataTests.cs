@@ -117,7 +117,7 @@ public static class DataTests
             Expect<InvalidOperationException>(() => f.Engine.WriteValue(FeatureId.Turn, 99));
             Check(f.Memory.Writes.Count == 0, "Stale UI authority wrote a new scene");
         });
-        test("data: partial native write restores attempted fields", () =>
+        test("data: partial native write preserves uncertain field and restores completed fields", () =>
         {
             var f = new DataFixture(); f.Engine.Refresh(); bool injected = false;
             f.Memory.BeforeWrite = (address, bytes) =>
@@ -126,9 +126,31 @@ public static class DataTests
                 injected = true; f.Memory.PutBytes(address, bytes.AsSpan(0, 2)); throw new IOException("injected short write");
             };
             var error = Expect<DataWriteException>(() => f.Engine.WriteValue(FeatureId.DeathRate, 50));
-            Check(error.RollbackComplete, "Recoverable partial write not restored");
-            Check(f.Memory.Int(f.Campaign + 0x94) == 125 && f.Memory.Int(f.Campaign + 0x90) == 12, "Original values lost");
+            Check(!error.RollbackComplete && error.UnrestoredAddresses.Contains(f.Campaign + 0x90), "Partial write incorrectly claimed as owned");
+            Check(f.Memory.Int(f.Campaign + 0x94) == 125 && f.Memory.Int(f.Campaign + 0x90) == 50, "Completed/uncertain fields handled incorrectly");
             Check(f.Memory.Int(f.Campaign + 0x88) == 37500, "Unattempted field changed");
+        });
+        test("data: failed write never adopts a competing readback, even equal to target", () =>
+        {
+            foreach (int competing in new[] { 777, 500 })
+            {
+                var f = new DataFixture(); f.Engine.Refresh(); bool injected = false;
+                f.Memory.BeforeWrite = (address, _) =>
+                {
+                    if (address != f.Campaign + 0x94 || injected) return;
+                    injected = true; f.Memory.Put(address, competing); throw new IOException("failed write with concurrent update");
+                };
+                var error = Expect<DataWriteException>(() => f.Engine.WriteValue(FeatureId.DeathRate, 50));
+                Check(!error.RollbackComplete && error.UnrestoredAddresses.Contains(f.Campaign + 0x94), "Unknown result reported restored");
+                Check(f.Memory.Int(f.Campaign + 0x94) == competing && f.Memory.Writes.Count == 1, "Competing result overwritten");
+            }
+        });
+        test("data: failed write leaving original bytes needs no rollback", () =>
+        {
+            var f = new DataFixture(); f.Engine.Refresh();
+            f.Memory.BeforeWrite = (_, _) => throw new IOException("no write occurred");
+            var error = Expect<DataWriteException>(() => f.Engine.WriteValue(FeatureId.DeathRate, 50));
+            Check(error.RollbackComplete && f.Memory.Writes.Count == 1 && f.Memory.Int(f.Campaign + 0x94) == 125, "Unchanged original incorrectly treated as conflict");
         });
         test("data: rollback never overwrites third-party conflict", () =>
         {
