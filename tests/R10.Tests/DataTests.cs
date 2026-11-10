@@ -66,7 +66,8 @@ public static class DataTests
             Check(new[] { 0u, 4u, 8u }.All(x => f.Memory.Int(f.Resources + x) == 3), "Resource maximum");
             f.Engine.MaintainToggle(FeatureId.War);
             Check(new[] { 0xBCu, 0xC0u, 0xC4u, 0xC8u }.All(x => f.Memory.Int(f.Campaign + x) == 3), "War maximum");
-            f.Engine.MaintainToggle(FeatureId.Treasure); Check(f.Memory.Int(f.Party + 0x34) == 100, "Treasure bonus");
+            f.Engine.MaintainToggle(FeatureId.Treasure);
+            Check(f.Memory.Int(f.CommonStatus + 0x34) == 100 && f.Memory.Int(f.Party + 0x34) == 2, "Treasure bonus wrote the wrong object");
         });
         test("data: death-rate exact write set and same-R derived repair", () =>
         {
@@ -343,7 +344,7 @@ internal sealed class DataFixture
     public R10DataEngine Engine { get; }
     public uint Offsets = 0x10040000, Turn = 0x20000000, Resources = 0x20001000, Party = 0x20002000,
         Campaign = 0x20004000, Enemy = 0x20005000, CharacterArray = 0x20009000,
-        Character1 = 0x20010000, Character2 = 0x20011000;
+        Character1 = 0x20010000, Character2 = 0x20011000, CommonStatus = 0x20012000;
     public uint CardContainer => Descriptor(0x120);
     public const uint PointerBase = 0x10010000;
     public DataFixture()
@@ -352,13 +353,14 @@ internal sealed class DataFixture
         Memory.Put(0x10000008, PointerBase); Memory.Put(PointerBase, 0x10020000);
         Memory.Put(0x10020000, 0x10030000); Memory.Put(0x10030010, Offsets);
         SetTable(0x3F8, 0x100, Turn); SetTable(0x400, 0x104, Resources);
-        SetTable(0x410, 0x479, Party); Bind(0x108, 0x20003000);
+        SetTable(0x410, 0x12C, Party); Bind(0x108, 0x20003000); Bind(0x130, CommonStatus);
         SetTable(0x500, 0x10C, Campaign); SetTable(0x48C, 0x110, Enemy);
         SetTable(0x490, 0x114, 0x20006000); Bind(0x118, 0x20007000);
         Memory.Put(0x20006000 + 13 * 4, 0x118); Memory.Put(0x20007000, 1);
         Memory.Put(Turn + 8, 0); Memory.Put(Turn + 12, 1);
-        Memory.Put(Party, 0x108); Memory.Put(Party + 0x10, 500); Memory.Put(Party + 0x34, 0);
-        Memory.Put(0x20003000, 1000); Memory.Put(Enemy, 500); Memory.Put(Enemy + 0x28, 500);
+        Memory.Put(Party, 0x108); Memory.Put(Party + 0x10, 500); Memory.Put(Party + 0x34, 2);
+        Memory.Put(0x20003000, 1000); Memory.Put(0x20003004, 0x130); Memory.Put(CommonStatus + 0x34, 0);
+        Memory.Put(Enemy, 500); Memory.Put(Enemy + 0x28, 500);
         Memory.Put(Resources, 2); Memory.Put(Resources + 4, 1); Memory.Put(Resources + 8, 2); Memory.Put(Resources + 0x20, 35);
         Memory.Put(Offsets + 0x560, 8);
         Memory.Put(Campaign + 0x94, 125); Memory.Put(Campaign + 0x90, 12); Memory.Put(Campaign + 0x88, 37500); Memory.Put(Campaign + 0x84, 262500); Memory.Put(Campaign + 0x8C, 123456);

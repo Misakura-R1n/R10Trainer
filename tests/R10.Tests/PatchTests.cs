@@ -419,7 +419,7 @@ public static class PatchTests
                 Await(runtime.StartAsync()); Program.WaitUntil(() => runtime.Current.Connection == ConnectionState.Ready);
                 memory.Data.Memory.BeforeWrite = (address, _) =>
                 {
-                    if (address == memory.Data.Party + 0x34)
+                    if (address == memory.Data.CommonStatus + 0x34)
                     { entered.Set(); if (!release.Wait(TimeSpan.FromSeconds(5))) throw new IOException("data gate expired"); }
                 };
                 Assert(Await(runtime.SetToggleAsync(FeatureId.Resources, true)).Success);
@@ -430,7 +430,7 @@ public static class PatchTests
                 for (uint offset = 0xBC; offset <= 0xC8; offset += 4) memory.Data.Memory.Put(memory.Data.Campaign + offset, 0);
                 int writes = memory.Data.Memory.Writes.Count;
                 var close = runtime.TryCloseAsync(); release.Set(); Assert(Await(close).Success);
-                Assert(memory.Data.Memory.Writes.Count == writes && memory.Data.Memory.Int(memory.Data.Party + 0x34) == 100);
+                Assert(memory.Data.Memory.Writes.Count == writes && memory.Data.Memory.Int(memory.Data.CommonStatus + 0x34) == 100);
                 Assert(memory.Data.Memory.Int(memory.Data.Resources) == 1 && memory.Data.Memory.Int(memory.Data.Campaign + 0xBC) == 0);
             }
             finally { release.Set(); Await(runtime.TryCloseAsync()); Program.WaitUntil(() => runtime.Current.Connection == ConnectionState.Closed); }

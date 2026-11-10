@@ -172,12 +172,11 @@ public sealed class R10DataEngine
                 uint campaignOwner = ValidateFields(graph, CampaignTable, [0xBC, 0xC0, 0xC4, 0xC8], 0, 3);
                 WriteFields(graph, CampaignTable, [0xBC, 0xC0, 0xC4, 0xC8], [3, 3, 3, 3], campaignOwner); break;
             case FeatureId.Treasure:
-                uint treasure = ResolveEncoded(graph, 0x479);
+                // Party.m_status -> PartyStatus.m_status -> CommonStatus.m_PerFindTreasure.
+                uint treasure = ResolveType(graph, PartyTable, 0, 1);
                 CheckRange(ReadInt(treasure, 0x34), 0, 1000, "宝箱发现加成");
-                // The known token aliases PartyStatus/CommonStatus; verify both routes.
-                if (ResolveType(graph, PartyTable) != treasure) throw new IOException("宝箱数据所属对象不一致。");
                 WriteSingle(Add(treasure, 0x34), 100, Guard(graph,
-                    () => ResolveEncoded(graph, 0x479) == treasure && ResolveType(graph, PartyTable) == treasure)); break;
+                    () => ResolveType(graph, PartyTable, 0, 1) == treasure)); break;
             case FeatureId.Hp:
                 RequireBattle();
                 uint party = ResolveType(graph, PartyTable), maximumAddress = ResolveType(graph, PartyTable, 0);
