@@ -77,7 +77,7 @@ public sealed class R10DataEngine
                     int roundValue = ReadInt(round), enemyHp = ReadInt(enemy), enemyMax = ReadInt(enemy, 0x28);
                     battle = InRange(roundValue, 1, 1000) && InRange(enemyMax, 1, MaximumHp) && InRange(enemyHp, 0, enemyMax);
                 }
-                catch (IOException) { battle = false; }
+                catch (Exception ex) when (IsMemoryFailure(ex)) { battle = false; }
             }
             if (ReadGraph() != graph || ResolveType(graph, TurnTable) != turn ||
                 ResolveType(graph, PartyTable) != party || ResolveType(graph, PartyTable, 0) != maximum ||
@@ -391,6 +391,7 @@ public sealed class R10DataEngine
     private uint ResolveEncoded(PointerGraph graph, int token) => ReadPointer(Add(ResolvePointerData(graph, token), 0x10));
     private uint ResolvePointerData(PointerGraph graph, int token)
     {
+        if (token < 0) throw new IOException("游戏对象尚未分配。");
         int remainder = token & 3;
         uint block = ReadPointer(Add(graph.PointerBase, unchecked(token - remainder)));
         return ReadPointer(Add(block, remainder * 4));

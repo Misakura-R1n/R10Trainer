@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
 using R10.Core;
 using R10.Core.Data;
@@ -211,6 +212,40 @@ public static class DataTests
             Check(!error.RollbackComplete && f.Memory.Writes.Count == 1, "Replaced card collection not isolated");
             Check(f.Memory.Int(f.Character2 + 4) == 20, "Later character written after layout loss");
         });
+        test("data: missing battle slots on the map do not follow invalid tokens", () =>
+        {
+            var f = new DataFixture();
+            uint roundTable = f.Offsets + 0x490, enemyTable = f.Offsets + 0x48C;
+            int roundToken = f.Memory.Int(roundTable), enemyToken = f.Memory.Int(enemyTable);
+            f.Memory.Put(roundTable, -1);
+            f.Memory.Put(enemyTable, -1);
+            f.Memory.BeforeRead = (address, _) =>
+            {
+                if (address == DataFixture.PointerBase - 4) throw new Exception("Negative token reached pointer table");
+            };
+            var map = f.Engine.Refresh();
+            Check(map.GameplayReady && !map.BattleReady && map.Error is null, "Missing battle objects disabled map data");
+            Check(f.Engine.ReadValues()[FeatureId.Turn] == 0, "Map values became unreadable");
+            Expect<InvalidOperationException>(() => f.Engine.MaintainToggle(FeatureId.EnemyNear));
+            Check(f.Memory.Writes.Count == 0, "Absent battle object was written");
+            f.Memory.Put(roundTable, roundToken);
+            f.Memory.Put(enemyTable, enemyToken);
+            Check(f.Engine.Refresh().BattleReady, "Returning to battle did not restore battle readiness");
+        });
+        test("data: Win32 partial reads only disable readiness for the affected scene", () =>
+        {
+            var f = new DataFixture();
+            uint missing = f.Enemy;
+            f.Memory.BeforeRead = (address, _) =>
+            {
+                if (address == missing) throw new Win32Exception(299, "Fixture read failed");
+            };
+            var optional = f.Engine.Refresh();
+            Check(optional.GameplayReady && !optional.BattleReady && optional.Error is null, "Optional battle read invalidated map data");
+            missing = f.Party + 0x10;
+            var required = f.Engine.Refresh();
+            Check(!required.GameplayReady && required.Error == "Fixture read failed", "Required read failure was lost");
+        });
         test("data: short read stops readiness and never writes", () =>
         {
             var f = new DataFixture(); f.Memory.Remove(f.Party + 0x10);
@@ -310,7 +345,7 @@ internal sealed class DataFixture
         Campaign = 0x20004000, Enemy = 0x20005000, CharacterArray = 0x20009000,
         Character1 = 0x20010000, Character2 = 0x20011000;
     public uint CardContainer => Descriptor(0x120);
-    private const uint PointerBase = 0x10010000;
+    public const uint PointerBase = 0x10010000;
     public DataFixture()
     {
         Memory.Put(Memory.ModuleBase + 0x3FCBB0, 0x10000000);
@@ -354,10 +389,12 @@ internal sealed class DataFakeMemory : IProcessMemory
     public int ProcessId => 1234;
     public uint ModuleBase => 0x400000;
     public bool IsAlive => true;
+    public Action<uint, int>? BeforeRead { get; set; }
     public Action<uint, byte[]>? BeforeWrite { get; set; }
     public ConcurrentQueue<(uint Address, byte[] Bytes)> Writes { get; } = [];
     public byte[] Read(uint address, int length)
     {
+        BeforeRead?.Invoke(address, length);
         var result = new byte[length];
         for (int i = 0; i < length; i++) if (!_bytes.TryGetValue(address + (uint)i, out result[i])) throw new IOException($"unmapped 0x{address + i:X}");
         return result;
