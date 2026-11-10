@@ -143,8 +143,54 @@ internal static class Program
         int stale=Request(SetValue("star",200)).GetProperty("id").GetInt32(); tick(2,1,5005); tick(1,16,16);
         Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=stale})).GetProperty("state").GetString()=="rejected" && data(0,0,0)==0,"load invalidates queued data command");
         Check(!Request("{\"op\":\"get_state\"}").GetProperty("dataReady").GetBoolean(),"load clears data snapshot readiness");
+        TestCardManagement(Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"CardEdit")));
         Console.WriteLine($"{checks-failed} passed, {failed} failed native helper checks; simulation=true; this is not a game compatibility test.");
         return failed==0 ? 0 : 1;
+    }
+
+    private static void TestCardManagement(Call edit)
+    {
+        const int generation = 6;
+        string Submit(int action, int context, string key = "", int star = 0) =>
+            JsonSerializer.Serialize(new { op = "card", action, argument = 0, argument2 = star, generation, context, key });
+        JsonElement Result(int id) => Request(JsonSerializer.Serialize(new { op = "get_command_result", id }));
+        int Context() => Request("{\"op\":\"get_state\"}").GetProperty("cardContext").GetInt32();
+        tick(3,1,0); tick(1,16,16);
+        Check(Request(Submit(10,1)).GetProperty("error").GetString()=="script_hook_unavailable", "old script rejects card management");
+        tick(0,1,1007); tick(1,16,16); edit(0,1,0);
+        int context = Context();
+        int page = Request(Submit(10,context)).GetProperty("id").GetInt32();
+        Check(Task.Run(() => edit(1,0,0)).GetAwaiter().GetResult()==0 && edit(1,0,0)==10 && edit(1,0,0)==0,
+            "only the game thread can claim a card request and cannot reenter it");
+        edit(4,0,6); edit(5,'L',0); edit(5,0xC0BC,0); edit(6,0xC0BC,0); edit(11,1,1);
+        var result = Result(page);
+        var row = result.GetProperty("cardRows")[0];
+        Check(result.GetProperty("state").GetString()=="applied" && result.GetProperty("cardTotal").GetInt32()==1 &&
+            row.GetProperty("idHex").GetString()=="4CC0BC" && row.GetProperty("characterHex").GetString()=="C0BC",
+            "card page carries copied CP936 bytes and the exact row");
+
+        int editId = Request(Submit(13,context,"4CC0BC.C0BC",80)).GetProperty("id").GetInt32();
+        Check(edit(1,0,0)==13 && edit(3,0,0)==80, "single-card star edit pins the requested target");
+        edit(4,0,7); edit(5,'L',0); edit(5,0xC0BC,0); edit(6,0xC0BC,0);
+        Check(edit(7,0,0)==1, "matching card and character IDs authorize a selected-row operation");
+        edit(9,80,0); edit(10,99999,999); edit(11,1,1);
+        Check(Result(editId).GetProperty("star").GetInt32()==80, "terminal reply carries the observed star");
+
+        int mismatch = Request(Submit(12,context,"4CC0BC.C0BD")).GetProperty("id").GetInt32();
+        edit(1,0,0); edit(4,0,6); edit(5,'L',0); edit(5,0xC0BC,0); edit(6,0xC0BC,0);
+        Check(edit(7,0,0)==0, "same row and card ID with a changed character cannot authorize the operation");
+        edit(11,0,0);
+        Check(Result(mismatch).GetProperty("state").GetString()=="rejected", "mismatched identity leaves no applied result");
+
+        int stale = Request(Submit(12,context,"4CC0BC.C0BC")).GetProperty("id").GetInt32();
+        edit(0,0,0); edit(0,1,0);
+        Check(Context()!=context && edit(1,0,0)==0 && Result(stale).GetProperty("state").GetString()=="rejected",
+            "leaving and reentering an eligible scene invalidates the old request");
+        context=Context();
+        int oldSave = Request(Submit(12,context,"4CC0BC.C0BC")).GetProperty("id").GetInt32();
+        tick(2,1,0); tick(1,16,16);
+        Check(Context()==0 && edit(1,0,0)==0 && Result(oldSave).GetProperty("state").GetString()=="rejected",
+            "loading cancels card commands and clears card readiness");
     }
     private static void Check(bool condition,string message)
     { checks++; if (!condition) failed++; Console.WriteLine((condition ? "PASS " : "FAIL ")+message); }

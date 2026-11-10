@@ -29,7 +29,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _gameSetup = new GameSetupViewModel(runtime as UnifiedTrainerRuntime,
             demo ? null : new BridgeInstaller(AppContext.BaseDirectory), settings, demo, ChooseGame);
-        _viewModel = new MainViewModel(runtime, ConfirmStarAsync, _gameSetup);
+        _viewModel = new MainViewModel(runtime, ConfirmStarAsync, _gameSetup, text => ConfirmAsync("修改角色★等级", text));
         DataContext = _viewModel;
         Title = demo ? "R10 修改器 · 演示" : "R10 修改器";
         foreach (var (key, group) in new[] { ("battle", _viewModel.Battle), ("strategy", _viewModel.Strategy), ("resources", _viewModel.Resources), ("growth", _viewModel.Growth) })
@@ -108,12 +108,16 @@ public partial class MainWindow : Window
         if (_settings.GameDirectory is { } directory && Directory.Exists(directory)) picker.InitialDirectory = directory;
         return picker.ShowDialog(this) == true ? picker.FileName : null;
     }
-    private Task<bool> ConfirmStarAsync(decimal value)
+    private Task<bool> ConfirmStarAsync(decimal value) => ConfirmAsync("批量修改角色★等级",
+        $"将已创建角色的★等级设为 {value}。这会清空经验，可能降低等级，并影响继承。");
+
+    private Task<bool> ConfirmAsync(string title, string text)
     {
         if (_confirmation is not null) return Task.FromResult(false);
         _confirmation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _focusBeforeConfirmation = Keyboard.FocusedElement;
-        ConfirmationText.Text = $"将已创建角色的★等级设为 {value}。这会清空经验，可能降低等级，并影响继承。";
+        ConfirmationTitle.Text = title;
+        ConfirmationText.Text = text;
         ConfirmationMode.Text = _demo ? "当前为演示模式，不会写入游戏。" : "请确认目标等级后应用。关闭功能不会撤销这次数值修改。";
         ApplicationSurface.IsEnabled = false;
         ConfirmationOverlay.Visibility = Visibility.Visible;

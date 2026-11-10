@@ -1,0 +1,108 @@
+<UserControl x:Class="R10.App.Controls.CardManagementView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StackPanel Margin="0,0,0,24">
+    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Style="{StaticResource MutedText}"
+               Margin="0,0,0,10" AutomationProperties.AutomationId="Cards.Status" AutomationProperties.LiveSetting="Polite"/>
+    <Grid Margin="0,0,0,8" IsEnabled="{Binding CanBrowse}">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="100"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <Border Background="{DynamicResource ControlBrush}" BorderBrush="{DynamicResource LineBrush}"
+              BorderThickness="1" CornerRadius="6" Margin="0,0,8,0">
+        <TextBox Text="{Binding Search,UpdateSourceTrigger=PropertyChanged}" MinHeight="30"
+                 AutomationProperties.Name="搜索卡名或角色" AutomationProperties.AutomationId="Cards.Search"
+                 ToolTip="输入卡名、版本或角色名"/>
+      </Border>
+      <ComboBox Grid.Column="1" SelectedIndex="{Binding Filter}" AutomationProperties.Name="持有状态"
+                AutomationProperties.AutomationId="Cards.Filter">
+        <ComboBoxItem Content="全部卡片"/>
+        <ComboBoxItem Content="已拥有"/>
+        <ComboBoxItem Content="未拥有"/>
+      </ComboBox>
+      <Button Grid.Column="2" Content="刷新" Command="{Binding RefreshCommand}" Margin="8,0,0,0"
+              AutomationProperties.AutomationId="Cards.Refresh"/>
+    </Grid>
+    <TextBlock Text="{Binding CountLabel}" Style="{StaticResource MutedText}" Margin="0,0,0,7"
+               AutomationProperties.AutomationId="Cards.Count"/>
+    <ListBox ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected}" Height="214"
+             Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource LineBrush}"
+             Foreground="{DynamicResource TextBrush}" BorderThickness="1" IsEnabled="{Binding CanBrowse}"
+             ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True"
+             AutomationProperties.Name="卡片目录" AutomationProperties.AutomationId="Cards.List">
+      <ListBox.Template>
+        <ControlTemplate TargetType="ListBox">
+          <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+            <ScrollViewer CanContentScroll="True" Focusable="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+              <ItemsPresenter/>
+            </ScrollViewer>
+          </Border>
+        </ControlTemplate>
+      </ListBox.Template>
+      <ListBox.ItemContainerStyle>
+        <Style TargetType="ListBoxItem">
+          <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+          <Setter Property="AutomationProperties.Name" Value="{Binding Id}"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ListBoxItem">
+                <Border x:Name="Row" Background="Transparent" Padding="9,6">
+                  <ContentPresenter/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource HoverBrush}"/></Trigger>
+                  <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource SelectedBrush}"/></Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+      </ListBox.ItemContainerStyle>
+      <ListBox.ItemTemplate>
+        <DataTemplate>
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Right" Margin="8,0,0,0">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                  <Setter Property="Text" Value="未拥有"/>
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding Collectible}" Value="False"><Setter Property="Text" Value="仅查看"/></DataTrigger>
+                    <DataTrigger Binding="{Binding Owned}" Value="True"><Setter Property="Text" Value="已拥有"/></DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
+            <TextBlock Text="{Binding Id}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Id}"/>
+          </DockPanel>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+    <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="9" Margin="0,12,0,0" Padding="12"
+            Visibility="{Binding HasSelection,Converter={StaticResource BoolVisibility}}">
+      <StackPanel>
+        <TextBlock Text="{Binding Selected.Id}" FontSize="16" FontWeight="Medium" TextWrapping="Wrap"
+                   AutomationProperties.AutomationId="Cards.Selected"/>
+        <TextBlock Text="{Binding DetailLabel}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,5,0,9"
+                   AutomationProperties.AutomationId="Cards.Detail"/>
+        <WrapPanel>
+          <Button Content="获取此卡" Command="{Binding GrantCommand}" Margin="0,0,12,6"
+                  AutomationProperties.AutomationId="Cards.Grant"/>
+          <TextBlock Text="目标 ★" VerticalAlignment="Center" Margin="0,0,6,6"/>
+          <Border Background="{DynamicResource ControlBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                  CornerRadius="6" Margin="0,0,6,6" Width="65">
+            <TextBox Text="{Binding StarText,UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEditStar}"
+                     AutomationProperties.Name="目标角色星级" AutomationProperties.AutomationId="Cards.StarInput">
+              <TextBox.InputBindings><KeyBinding Key="Enter" Command="{Binding ApplyStarCommand}"/></TextBox.InputBindings>
+            </TextBox>
+          </Border>
+          <Button Content="设置角色★" Command="{Binding ApplyStarCommand}" Style="{StaticResource PrimaryButton}" Margin="0,0,0,6"
+                  AutomationProperties.AutomationId="Cards.ApplyStar"/>
+        </WrapPanel>
+        <TextBlock Text="同一角色的所有版本共享 ★。卡名中的 Lv 表示卡片版本。" TextWrapping="Wrap" Style="{StaticResource MutedText}"/>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

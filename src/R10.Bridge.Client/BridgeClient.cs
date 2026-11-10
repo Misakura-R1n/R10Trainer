@@ -1,9 +1,12 @@
+using System.Text;
 using System.Text.Json;
 
 namespace R10.Bridge.Client;
 
 public sealed class BridgeClient : IBridgeClient
 {
+    private static readonly Encoding CardEncoding = CodePagesEncodingProvider.Instance.GetEncoding(936,
+        EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)!;
     private readonly IBridgeTransport _transport;
     public int ProcessId { get; }
     public bool IsSimulation => _transport.IsSimulation;
@@ -33,7 +36,8 @@ public sealed class BridgeClient : IBridgeClient
             NullableInteger(response, "scriptVersion"), NullableInteger(response, "capabilities"),
             NullableNonnegativeInteger(response, "loadKind"), NullableInteger(response, "loadSlot"),
             NullableNonnegativeInteger(response, "lastCompletedGeneration"), NullableNonnegativeInteger(response, "lastLoadOutcome"))
-        { ResourcesFull = response.TryGetProperty("resourcesFull", out var full) && full.ValueKind == JsonValueKind.True, DataReady = response.TryGetProperty("dataReady", out var data) && data.ValueKind == JsonValueKind.True, Food=NullableInteger(response,"food"), Medal=NullableInteger(response,"medal"), Friendship=NullableInteger(response,"friendship"), Unit=NullableInteger(response,"unit"), FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True };
+        { ResourcesFull = response.TryGetProperty("resourcesFull", out var full) && full.ValueKind == JsonValueKind.True, DataReady = response.TryGetProperty("dataReady", out var data) && data.ValueKind == JsonValueKind.True, Food=NullableInteger(response,"food"), Medal=NullableInteger(response,"medal"), Friendship=NullableInteger(response,"friendship"), Unit=NullableInteger(response,"unit"), FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True,
+            CardContext = response.TryGetProperty("cardContext", out _) ? BoundedInteger(response, "cardContext", int.MaxValue) : 0 };
     }
 
     public static bool ValidDataValue(string feature, int value) => feature switch
@@ -63,6 +67,20 @@ public sealed class BridgeClient : IBridgeClient
         var response = await ExchangeAsync(new { op = "action", action, argument, argument2, generation }, true, cancellationToken).ConfigureAwait(false);
         try { return ParseCommand(response); }
         catch (BridgeException error) { throw new BridgeException(error.Code, error.Message, true, error); }
+    }
+
+    public async Task<BridgeCommand> SubmitCardForSessionAsync(string session, long generation, int context, CardRequest request, CancellationToken cancellationToken = default)
+    {
+        ValidateSession(session);
+        if (generation < 0 || context <= 0 || request.Index is < 0 or >= CardRequest.RowLimit ||
+            request.Operation is < CardOperation.Page or > CardOperation.SetStar ||
+            (request.Operation == CardOperation.SetStar ? request.Star < 0 : request.Star != 0) ||
+            (request.Operation == CardOperation.Page ? request.Key.Length != 0 : request.Key.Length is < 3 or > 257))
+            throw new BridgeException("invalid_card_request", "卡片、读档状态或目标★无效。");
+        var response = await ExchangeAsync(new { op = "card", action = (int)request.Operation, argument = request.Index,
+            argument2 = request.Star, generation, context, key = request.Key }, request.Writes, cancellationToken).ConfigureAwait(false);
+        try { return ParseCommand(response); }
+        catch (BridgeException error) when (request.Writes) { throw new BridgeException(error.Code, error.Message, true, error); }
     }
 
     public async Task<BridgeCommand> SetFeatureAsync(string feature, bool enabled, long generation, CancellationToken cancellationToken = default)
@@ -128,7 +146,47 @@ public sealed class BridgeClient : IBridgeClient
         var state = Text(response, "state");
         if (id <= 0 || state is not ("queued" or "applied" or "rejected")) throw Invalid("command");
         var error = response.TryGetProperty("error", out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null;
-        return new BridgeCommand(id, state, error);
+        return new BridgeCommand(id, state, error)
+        {
+            Cards = state == "applied" && response.TryGetProperty("cardRows", out var rows) ? ParseCards(response, rows) : null
+        };
+    }
+
+    private static CardReply ParseCards(JsonElement response, JsonElement rows)
+    {
+        int total = BoundedInteger(response, "cardTotal", CardRequest.RowLimit);
+        if (rows.ValueKind != JsonValueKind.Array || rows.GetArrayLength() is < 1 or > CardRequest.PageSize || total == 0)
+            throw Invalid("cardRows");
+        var entries = new List<CardEntry>(rows.GetArrayLength());
+        foreach (var row in rows.EnumerateArray())
+        {
+            if (row.ValueKind != JsonValueKind.Object) throw Invalid("cardRows");
+            int index = BoundedInteger(row, "index", total - 1);
+            if (entries.Count != 0 && index != entries[^1].Index + 1) throw Invalid("index");
+            string idHex = Text(row, "idHex"), characterHex = Text(row, "characterHex");
+            string id = DecodeCardText(idHex), character = DecodeCardText(characterHex);
+            if (id.Length == 0) throw Invalid("idHex");
+            entries.Add(new(index, id, character, BoundedInteger(row, "flags", 7), idHex + "." + characterHex));
+        }
+        if (!response.TryGetProperty("star", out _)) return new(total, entries);
+        long star = NullableInteger(response, "star") ?? throw Invalid("star");
+        int maxStar = BoundedInteger(response, "maxStar", int.MaxValue);
+        if (entries.Count != 1 || star < -1 || star > int.MaxValue) throw Invalid("star");
+        return new(total, entries, star < 0 ? null : (int)star, BoundedInteger(response, "exp", int.MaxValue),
+            BoundedInteger(response, "nextExp", int.MaxValue), maxStar);
+    }
+
+    private static string DecodeCardText(string hex)
+    {
+        if (hex.Length > 128) throw Invalid("card text");
+        try { return CardEncoding.GetString(Convert.FromHexString(hex)); }
+        catch (Exception error) when (error is FormatException or DecoderFallbackException) { throw Invalid("card text"); }
+    }
+
+    private static int BoundedInteger(JsonElement root, string name, int max)
+    {
+        long number = Integer(root, name);
+        return number <= max ? (int)number : throw Invalid(name);
     }
 
     private static long Integer(JsonElement root, string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) && number >= 0

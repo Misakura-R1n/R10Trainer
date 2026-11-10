@@ -44,6 +44,8 @@ public sealed record TrainerSnapshot(ConnectionState Connection, string Status, 
     string RuntimeMode = "memory", string? Notice = null)
 {
     public GameLoadEpoch? LoadEpoch { get; init; }
+    public bool CardManagementAvailable { get; init; }
+    public int CardContext { get; init; }
     public static TrainerSnapshot Empty { get; } = new(ConnectionState.Searching, "等待游戏连接", null, false,
         FeatureCatalog.All.ToDictionary(x => x.Id, _ => new FeatureObservation()));
 }

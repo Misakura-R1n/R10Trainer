@@ -14,7 +14,8 @@ def export(source: bytes, dll: bytes) -> dict:
     original = zlib.decompress(source[16:])
     target = zlib.decompress(generated[16:])
     code_delta = report['newCodeLength'] - report['originalCodeLength']
-    func_delta = sum(len(new_function_record(f['entry'], f['name'], f['returnType'], f['arguments'])) for f in report['addedFunctions'])
+    func_delta = sum(len(new_function_record(f['entry'], f['name'], f['returnType'], f['arguments'], f.get('locals', ())))
+                     for f in report['addedFunctions'])
     hll_delta = len(target) - len(original) - code_delta - func_delta
     edits = []
     shift = 0
@@ -43,7 +44,7 @@ def export(source: bytes, dll: bytes) -> dict:
         cursor = edit['offset'] + edit['remove']
     rebuilt.extend(original[cursor:])
     assert bytes(rebuilt) == target
-    assert sum(len(base64.b64decode(e['data'])) for e in edits) < 8192
+    assert sum(len(base64.b64decode(e['data'])) for e in edits) <= 12 * 1024
     return {'schema': 1, 'sourceSha256': SOURCE_SHA, 'sourcePlainSha256': sha(original),
             'targetPlainSha256': sha(target), 'sourcePlainLength': len(original), 'targetPlainLength': len(target),
             'exeSha256': '39A508C05B13AFC5427F0B722FCE5C4EDECED126587E037D585CF0E70D279297',

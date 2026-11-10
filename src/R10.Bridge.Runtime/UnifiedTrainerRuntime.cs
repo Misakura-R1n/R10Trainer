@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using R10.Bridge.Client;
 using R10.Core;
 using R10.Core.Memory;
 
@@ -9,7 +10,7 @@ namespace R10.Bridge.Runtime;
 
 /// <summary>The desktop product's runtime. HP is always a game-thread bridge operation.
 /// Component features never fall back to external writes; other features retain their memory implementation.</summary>
-public sealed class UnifiedTrainerRuntime : ITrainerRuntime
+public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRuntime
 {
     public const string HpHelp = "在已接入的战斗伤害结算点保护我方 HP。保留治疗、初始化与结果结算；不主动补满血量。首次使用请安装游戏组件并重新启动游戏。";
     private readonly SemaphoreSlim _gate = new(1);
@@ -92,6 +93,20 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
         ExecuteAsync(id, false, runtime => runtime.SetValueForEpochAsync(id, value, expected));
     public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => ExecuteAsync(id, false, runtime => runtime.SetLockAsync(id, enabled));
     public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => ExecuteAsync(id, true, runtime => runtime.SetToggleAsync(id, enabled));
+
+    public async Task<CardReply> ExecuteCardAsync(CardAccess expected, CardRequest request)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_closed || _recovering || Volatile.Read(ref _transitions) != 0 ||
+                _pair is not { } pair || pair.Bridge is not ICardManagementRuntime cards ||
+                !ComponentReady(pair.Memory.Current, pair.Bridge.Current))
+                throw new BridgeException("card_unavailable", "卡片管理尚未就绪，请等待所选游戏连接。");
+            return await cards.ExecuteCardAsync(expected, request).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
 
     private async Task<OperationResult> ExecuteAsync(FeatureId id, bool toggle, Func<ITrainerRuntime, Task<OperationResult>> action)
     {
@@ -230,6 +245,8 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime
                 {
                     RuntimeMode = "unified", Features = features,
                     LoadEpoch = ready && !_recovering && !mismatch ? bridge.LoadEpoch : null,
+                    CardManagementAvailable = ready && !_recovering && !mismatch && bridge.CardManagementAvailable,
+                    CardContext = ready && !_recovering && !mismatch ? bridge.CardContext : 0,
                     Connection = _recovering ? ConnectionState.RestorePending : mismatch ? ConnectionState.Loading : memory.Connection,
                     Status = _recovering ? "正在恢复修改" : mismatch ? "正在重新连接游戏" : memory.Status,
                     Error = _recoveryError ?? memory.Error,

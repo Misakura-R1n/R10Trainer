@@ -92,6 +92,9 @@ public sealed class DiscoveringBridgeClient : IBridgeClient
     public Task<BridgeCommand> ActionForSessionAsync(string session, int action, int argument, int argument2, long generation, CancellationToken cancellationToken = default) =>
         WithClientAsync(RequireSession(session), client => client.ActionForSessionAsync(session, action, argument, argument2, generation, cancellationToken), cancellationToken);
 
+    public Task<BridgeCommand> SubmitCardForSessionAsync(string session, long generation, int context, CardRequest request, CancellationToken cancellationToken = default) =>
+        WithClientAsync(RequireSession(session), client => client.SubmitCardForSessionAsync(session, generation, context, request, cancellationToken), cancellationToken);
+
     public Task<BridgeCommand> SetFeatureAsync(string feature, bool enabled, long generation, CancellationToken cancellationToken = default) =>
         throw new BridgeException("session_required", "Discovery mode requires SetFeatureForSessionAsync with a session from GetStateAsync.");
     public Task<BridgeCommand> GetCommandResultAsync(long id, CancellationToken cancellationToken = default) =>

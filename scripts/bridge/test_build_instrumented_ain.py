@@ -315,10 +315,29 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(vm.events, [("tick", 4, 2, 0)])
 
     def test_startup_capabilities_match_full_profile(self):
-        self.assertEqual(self.report["capabilities"], 495)
+        self.assertEqual(self.report["capabilities"], 1007)
         startup = next(h for h in self.report["hooks"] if h["id"] == 0x47DD)
         prefix = bytes.fromhex(startup["prefixHex"])
-        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 495))
+        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 1007))
+
+    def test_card_management_uses_typed_locals_and_integer_native_abi(self):
+        pump = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardManagement")
+        update = next(hook for hook in self.report["hooks"] if hook["id"] == 0x2064)
+        self.assertEqual(update["cardManagement"], pump["id"])
+        plain = zlib.decompress(self.generated[16:])
+        func_start = 16 + self.report["newCodeLength"]
+        function_bytes = sum(len(builder.new_function_record(f["entry"], f["name"], f["returnType"],
+                                                              f["arguments"], f.get("locals", ())))
+                             for f in self.report["addedFunctions"])
+        func_end = func_start + 0x1395C28 - 0xDE5CFA + function_bytes
+        record = builder.read_functions(plain[func_start:func_end])[pump["id"]]
+        self.assertEqual(record["args"], 0)
+        self.assertEqual([t[0] for t in record["types"]], [10] * 8 + [12] * 2)
+        hll_start = 0x1AE658A + (func_end - 0x1395C28)
+        hll_end = 0x1AFA1BD + len(plain) - builder.SECTION_BOUNDS[-1][2]
+        export = builder.read_libraries(plain[hll_start:hll_end])[-1]["functions"][-1]
+        self.assertEqual(export, {"name": b"CardEdit", "returnType": 10,
+                                 "arguments": [(b"op", 10), (b"a", 10), (b"b", 10)]})
 
 
 if __name__ == "__main__":

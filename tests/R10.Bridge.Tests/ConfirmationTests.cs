@@ -1,4 +1,6 @@
 using R10.App.ViewModels;
+using R10.Bridge.Client;
+using R10.Bridge.Runtime;
 using R10.Core;
 
 static class ConfirmationTests
@@ -39,6 +41,35 @@ static class ConfirmationTests
                 if (accept) Check(ReferenceEquals(runtime.Expected, epoch) && !vm.HasError);
             }
         });
+        await test("card star confirmation keeps the selected card key and rejects changed read generations", async () =>
+        {
+            var epoch = new GameLoadEpoch(42, "42:original", 3, true);
+            foreach (bool loadDuringConfirmation in new[] { false, true })
+            {
+                var runtime = new Fixture(epoch);
+                var answer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var shown = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var vm = new CardManagementViewModel(runtime, text => { shown.SetResult(text); return answer.Task; });
+                vm.Update(runtime.Current);
+                vm.SetActive(true);
+                vm.Selected = vm.Rows[0];
+                vm.StarText = "80";
+                Check(vm.ApplyStarCommand.CanExecute(null));
+                var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                vm.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName == nameof(vm.Status) && vm.Status.Contains(loadDuringConfirmation ? "重新选择" : "已将"))
+                        finished.TrySetResult();
+                };
+                vm.ApplyStarCommand.Execute(null);
+                Check((await shown.Task.WaitAsync(TimeSpan.FromSeconds(3))).Contains(Fixture.OtherVersion.Id));
+                if (loadDuringConfirmation) vm.Update(runtime.Current with { LoadEpoch = epoch with { Generation = 4 }, CardContext = 6 });
+                answer.SetResult(true);
+                await finished.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Check(loadDuringConfirmation ? runtime.CardWrite is null :
+                    runtime.CardWrite == (new CardAccess(epoch, 5), new CardRequest(CardOperation.SetStar, Fixture.Card.Index, Fixture.Card.Key, 80)));
+            }
+        });
     }
     private static Task Completion(FeatureViewModel vm)
     {
@@ -47,9 +78,19 @@ static class ConfirmationTests
         return done.Task;
     }
     private static void Check(bool condition) { if (!condition) throw new InvalidOperationException("Confirmation assertion failed"); }
-    private sealed class Fixture(GameLoadEpoch epoch) : ITrainerRuntime
+    private sealed class Fixture(GameLoadEpoch epoch) : ITrainerRuntime, ICardManagementRuntime
     {
-        public TrainerSnapshot Current { get; set; } = TrainerSnapshot.Empty with { ProcessId = epoch.ProcessId, LoadEpoch = epoch };
+        internal static readonly CardEntry Card = new(0, "Lv42 兰斯", "兰斯", 7, "4C76343220C0BCCBB9.C0BCCBB9");
+        internal static readonly CardEntry OtherVersion = new(1, "Lv45 兰斯", "兰斯", 7, "4C76343520C0BCCBB9.C0BCCBB9");
+        public TrainerSnapshot Current { get; set; } = TrainerSnapshot.Empty with
+        { ProcessId = epoch.ProcessId, LoadEpoch = epoch, CardManagementAvailable = true, CardContext = 5 };
+        internal (CardAccess, CardRequest)? CardWrite;
+        public Task<CardReply> ExecuteCardAsync(CardAccess expected, CardRequest request)
+        {
+            if (request.Writes) CardWrite = (expected, request);
+            return Task.FromResult(request.Operation == CardOperation.Page ? new CardReply(2, [Card, OtherVersion])
+                : new CardReply(2, [Card], request.Writes ? request.Star : 10, 0, 259, 999));
+        }
         public event Action<TrainerSnapshot>? SnapshotChanged { add { } remove { } }
         public int ConditionalWrites, UnconditionalWrites;
         public GameLoadEpoch? Expected;

@@ -68,6 +68,36 @@ await Test("unsupported feature never reaches transport", async () =>
     Check((await Error(() => new BridgeClient(42, transport).SetFeatureAsync("food", true, 3))).Code == "unsupported_feature");
     Check(transport.Requests.Count == 0);
 });
+await Test("card command carries session, generation, context and the exact card/character key", async () =>
+{
+    var transport = new FixtureTransport(_ => Ok(new { id = 7, state = "queued" }), "42:123");
+    var client = new BridgeClient(42, transport);
+    var request = new CardRequest(CardOperation.SetStar, 2, "4C76343220C0BCCBB9.C0BCCBB9", 47);
+    await client.SubmitCardForSessionAsync("42:123", 3, 5, request);
+    var sent = transport.Requests.Single();
+    Check(sent.GetProperty("generation").GetInt32() == 3 && sent.GetProperty("context").GetInt32() == 5 &&
+        sent.GetProperty("key").GetString() == request.Key && sent.GetProperty("argument2").GetInt32() == 47);
+    Check((await Error(() => client.SubmitCardForSessionAsync("42:other", 3, 5, request))).Code == "session_changed");
+    Check((await Error(() => client.SubmitCardForSessionAsync("42:123", 3, 5, request with { Star = -1 }))).Code == "invalid_card_request");
+    Check(transport.Requests.Count == 1);
+});
+await Test("card readback decodes CP936 and rejects malformed or noncontiguous rows", async () =>
+{
+    object Row(int index, string idHex) => new { index, flags = 7, idHex, characterHex = "C0BCCBB9" };
+    var client = new BridgeClient(42, new FixtureTransport(_ => Ok(new
+    {
+        id = 7, state = "applied", cardTotal = 1134, cardRows = new[] { Row(2,"4C76343220C0BCCBB9") },
+        star = 47, exp = 0, nextExp = 4525, maxStar = 999
+    })));
+    var result = (await client.GetCommandResultAsync(7)).Cards!;
+    Check(result.Rows.Single().Id == "Lv42 兰斯" && result.Rows.Single().CharacterId == "兰斯" &&
+        result.Star == 47 && result.Rows[0].Owned);
+    foreach (object[] rows in new[] { new[] { Row(0,"X") }, new[] { Row(0,"41"), Row(2,"42") } })
+    {
+        var malformed = new BridgeClient(42, new FixtureTransport(_ => Ok(new { id = 7, state = "applied", cardTotal = 3, cardRows = rows })));
+        Check((await Error(() => malformed.GetCommandResultAsync(7))).Code == "invalid_response");
+    }
+});
 await Test("state rejects wrong PID", async () => Check((await Error(() => new BridgeClient(43, new FixtureTransport(_ => State())).GetStateAsync())).Code == "response_pid_mismatch"));
 await Test("state rejects malformed numeric fields without leaking parsing exceptions", async () =>
 {

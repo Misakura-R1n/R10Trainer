@@ -34,6 +34,8 @@ public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, lon
     public long? Friendship { get; init; }
     public long? Unit { get; init; }
     public bool DataAvailable => (Capabilities.GetValueOrDefault() & 256) != 0;
+    public bool CardManagementAvailable => (Capabilities.GetValueOrDefault() & 512) != 0;
+    public int CardContext { get; init; }
     public bool FoodRedraw { get; init; }
     public bool AutoRedistribute { get; init; }
     public bool FoodRedrawAvailable => (Capabilities.GetValueOrDefault() & 64) != 0;
@@ -50,7 +52,27 @@ public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, lon
 public sealed record BridgeCommand(long Id, string State, string? Error = null)
 {
     public bool IsTerminal => State is "applied" or "rejected";
+    public CardReply? Cards { get; init; }
 }
+
+public enum CardOperation { Page = 10, Inspect, Grant, SetStar }
+
+public sealed record CardEntry(int Index, string Id, string CharacterId, int Flags, string Key)
+{
+    public bool Owned => (Flags & 1) != 0;
+    public bool Collectible => (Flags & 2) != 0;
+    public bool CanGrant => Collectible && !Owned;
+}
+
+public sealed record CardRequest(CardOperation Operation, int Index, string Key = "", int Star = 0)
+{
+    public const int PageSize = 32;
+    public const int RowLimit = 4096;
+    public bool Writes => Operation is CardOperation.Grant or CardOperation.SetStar;
+}
+
+public sealed record CardReply(int Total, IReadOnlyList<CardEntry> Rows, int? Star = null,
+    int Experience = 0, int NextExperience = 0, int MaxStar = 0);
 
 public interface IBridgeClient
 {
@@ -67,6 +89,8 @@ public interface IBridgeClient
         throw new BridgeException("unsupported_operation", "This bridge client does not support typed data operations.");
     Task<BridgeCommand> ActionForSessionAsync(string session, int action, int argument, int argument2, long generation, CancellationToken cancellationToken = default) =>
         throw new BridgeException("unsupported_operation", "This bridge client does not support semantic controls.");
+    Task<BridgeCommand> SubmitCardForSessionAsync(string session, long generation, int context, CardRequest request, CancellationToken cancellationToken = default) =>
+        throw new BridgeException("unsupported_operation", "This bridge client does not support card management.");
 }
 
 // Injectable only for protocol tests. Production always uses the PID-verified Windows pipe transport.

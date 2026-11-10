@@ -26,9 +26,15 @@ public sealed class MainViewModel : ObservableObject
     public FeatureGroupViewModel Resources { get; }
     public FeatureGroupViewModel Growth { get; }
     public GameSetupViewModel GameSetup { get; }
+    public CardManagementViewModel Cards { get; }
+    public bool ShowCards => Page == "cards";
+    private bool CardPageReady => ShowCards && Cards.IsConnected;
+    public string PageStatus => CardPageReady ? "卡片管理已连接" : Status;
+    public bool ShowPageNotice => ShowNotice && !CardPageReady;
+    public bool ShowPageError => ShowError && !CardPageReady;
     public string Page { get => _page; private set => Set(ref _page, value); }
     public string Title => Navigation.First(x => x.Key == Page).Label;
-    public string Subtitle => Page switch { "battle" => "战斗中的常用操作。", "strategy" => "管理回合、兵力与战局。", "resources" => "调整当前资源与发现加成。", "growth" => "调整成长数值与辅助功能。", _ => "把操作留在手边，继续你的冒险。" };
+    public string Subtitle => Page switch { "battle" => "战斗中的常用操作。", "strategy" => "管理回合、兵力与战局。", "resources" => "调整当前资源与发现加成。", "growth" => "调整成长数值与辅助功能。", "cards" => "按卡名或角色查找，获取指定版本或调整角色★。", _ => "把操作留在手边，继续你的冒险。" };
     public bool IsSimulation { get => _simulation; private set => Set(ref _simulation, value); }
     public string BuildLabel => IsSimulation ? "演示模式" : "v" + typeof(MainViewModel).Assembly.GetName().Version?.ToString(3);
     public string Status { get => _status; private set => Set(ref _status, value); }
@@ -39,9 +45,10 @@ public sealed class MainViewModel : ObservableObject
     public bool ShowError { get => _showError; private set => Set(ref _showError, value); }
     public bool CompactNavigation { get => _compactNavigation; set => Set(ref _compactNavigation, value); }
     public event Action? NavigationChanged;
-    public MainViewModel(ITrainerRuntime runtime, Func<decimal, Task<bool>> confirmStar, GameSetupViewModel gameSetup)
+    public MainViewModel(ITrainerRuntime runtime, Func<decimal, Task<bool>> confirmStar, GameSetupViewModel gameSetup, Func<string, Task<bool>> confirmCardStar)
     {
         _runtime = runtime; GameSetup = gameSetup;
+        Cards = new CardManagementViewModel(runtime, confirmCardStar);
         Features = FeatureCatalog.All.ToDictionary(x => x.Id, x => new FeatureViewModel(x, runtime, SetFooter, confirmStar));
         FeatureGroupViewModel Group(FeatureGroup group, string name, string glyph) => new(name, glyph, Features.Values.Where(x => x.Definition.Group == group).ToArray());
         Battle = Group(FeatureGroup.Battle, "战斗", "\uE945"); Strategy = Group(FeatureGroup.Strategy, "战略", "\uE7C1");
@@ -49,7 +56,8 @@ public sealed class MainViewModel : ObservableObject
         Navigation = new[] {
             new NavigationItem("all", "全部功能", "\uE80A", SelectPage), new NavigationItem("battle", "战斗", "\uE945", SelectPage),
             new NavigationItem("strategy", "战略", "\uE7C1", SelectPage), new NavigationItem("resources", "资源", "\uE7B8", SelectPage),
-            new NavigationItem("growth", "成长与辅助", "\uE734", SelectPage)
+            new NavigationItem("growth", "成长与辅助", "\uE734", SelectPage),
+            new NavigationItem("cards", "卡片管理", "\uE8A5", SelectPage)
         };
         Navigation[0].Selected = true;
         Update(runtime.Current);
@@ -59,7 +67,10 @@ public sealed class MainViewModel : ObservableObject
         if (!Navigation.Any(x => x.Key == page)) return;
         Page = page;
         foreach (var item in Navigation) item.Selected = item.Key == page;
-        Changed(nameof(Title)); Changed(nameof(Subtitle)); NavigationChanged?.Invoke();
+        Cards.SetActive(ShowCards);
+        Changed(nameof(Title)); Changed(nameof(Subtitle)); Changed(nameof(ShowCards));
+        UpdatePageStatus();
+        NavigationChanged?.Invoke();
     }
     public void Update(TrainerSnapshot snapshot)
     {
@@ -85,7 +96,15 @@ public sealed class MainViewModel : ObservableObject
         var canCancel = snapshot.ProcessId.HasValue && snapshot.Connection != ConnectionState.Closed;
         foreach (var (id, feature) in Features) feature.Update(snapshot.Features.GetValueOrDefault(id) ?? new(), canCancel);
         GameSetup.Observe(snapshot);
+        Cards.Update(snapshot);
+        UpdatePageStatus();
     }
     public void SetFooter(string value) => Footer = (IsSimulation ? "演示 · " : "") + value;
-    public void SetError(string value) { Error = value; ShowError = value.Length > 0; }
+    public void SetError(string value) { Error = value; ShowError = value.Length > 0; UpdatePageStatus(); }
+    private void UpdatePageStatus()
+    {
+        Changed(nameof(PageStatus));
+        Changed(nameof(ShowPageNotice));
+        Changed(nameof(ShowPageError));
+    }
 }

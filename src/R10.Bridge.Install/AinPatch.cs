@@ -14,7 +14,7 @@ internal sealed record InstallProfile(string ExeHash, string SourceHash, string 
     internal static readonly InstallProfile Supported = new(
         "39A508C05B13AFC5427F0B722FCE5C4EDECED126587E037D585CF0E70D279297",
         "7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A",
-        "7C674704D331F697339643A541958B259B8B7179D72346CA9C573F5A4B5829AF");
+        "C0989948D8B10CCDFC5638A77FEF3E44B0F100AA92C609915F5DE361BB7007EC");
 }
 
 internal static class AinPatch
@@ -70,7 +70,7 @@ internal static class AinPatch
                 throw new InvalidDataException("HP 补丁范围无效。");
             var replacement=Convert.FromBase64String(edit.Data);
             authorBytes=checked(authorBytes+replacement.Length);
-            if (authorBytes>8192 || !Same(Hash(original.AsSpan(edit.Offset,edit.Remove).ToArray()),edit.ExpectedSha256)) throw new InvalidDataException("HP 补丁原始字节校验失败。");
+            if (authorBytes>12*1024 || !Same(Hash(original.AsSpan(edit.Offset,edit.Remove).ToArray()),edit.ExpectedSha256)) throw new InvalidDataException("HP 补丁原始字节校验失败。");
             result.Write(original,cursor,edit.Offset-cursor); result.Write(replacement); cursor=edit.Offset+edit.Remove;
         }
         result.Write(original,cursor,original.Length-cursor);

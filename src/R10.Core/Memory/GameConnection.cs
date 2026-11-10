@@ -12,10 +12,13 @@ public sealed class GameConnection : IDisposable
     public const string SupportedAinHash = "7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A";
     // The installer recompresses the exact same AI2 payload with the bundled .NET runtime.
     // Its compressed bytes may differ from Python/zlib, but no script byte may differ.
-    public const string SupportedBridgeAinPlainHash = "7C674704D331F697339643A541958B259B8B7179D72346CA9C573F5A4B5829AF";
+    public const string SupportedBridgeAinPlainHash = "C0989948D8B10CCDFC5638A77FEF3E44B0F100AA92C609915F5DE361BB7007EC";
     public const string SupportedBridgeAinFingerprint = "bridge-v1:" + SupportedBridgeAinPlainHash;
-    public const int SupportedBridgeAinPlainLength = 28724545;
-    public const uint SupportedBridgeCodeLength = 14577316;
+    public const int SupportedBridgeAinPlainLength = 28727422;
+    public const uint SupportedBridgeCodeLength = 14579806;
+    private const string PreviousBridgeAinPlainHash = "7C674704D331F697339643A541958B259B8B7179D72346CA9C573F5A4B5829AF";
+    private const string PreviousBridgeAinFingerprint = "bridge-v1:" + PreviousBridgeAinPlainHash;
+    private const int PreviousBridgeAinPlainLength = 28724545;
     private readonly FileStream? _exe, _ain;
     public IProcessMemory Memory { get; }
     public string AinPath { get; }
@@ -72,7 +75,10 @@ public sealed class GameConnection : IDisposable
     }
     public static bool IsSupportedAinFingerprint(string fingerprint, bool allowBridge = true) =>
         string.Equals(fingerprint, SupportedAinHash, StringComparison.OrdinalIgnoreCase) ||
-        (allowBridge && string.Equals(fingerprint, SupportedBridgeAinFingerprint, StringComparison.OrdinalIgnoreCase));
+        (allowBridge && IsBridgeAinFingerprint(fingerprint));
+    internal static bool IsBridgeAinFingerprint(string fingerprint) =>
+        string.Equals(fingerprint, SupportedBridgeAinFingerprint, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(fingerprint, PreviousBridgeAinFingerprint, StringComparison.OrdinalIgnoreCase);
     public static string ReadAinFingerprint(string path, bool allowBridge = true)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -87,8 +93,9 @@ public sealed class GameConnection : IDisposable
         if (!allowBridge || compressedHash == SupportedAinHash || stream.Length is < 16 or > 64 * 1024 * 1024) return compressedHash;
         Span<byte> header = stackalloc byte[16];
         stream.ReadExactly(header);
+        int plainLength = BinaryPrimitives.ReadInt32LittleEndian(header[8..12]);
         if (!header[..8].SequenceEqual("AI2\0\0\0\0\0"u8) ||
-            BinaryPrimitives.ReadInt32LittleEndian(header[8..12]) != SupportedBridgeAinPlainLength ||
+            plainLength is not (SupportedBridgeAinPlainLength or PreviousBridgeAinPlainLength) ||
             BinaryPrimitives.ReadUInt32LittleEndian(header[12..16]) != stream.Length - 16) { stream.Position = 0; return compressedHash; }
         try
         {
@@ -99,11 +106,13 @@ public sealed class GameConnection : IDisposable
             while ((count = decoded.Read(buffer)) != 0)
             {
                 total = checked(total + count);
-                if (total > SupportedBridgeAinPlainLength) return compressedHash;
+                if (total > plainLength) return compressedHash;
                 hash.AppendData(buffer.AsSpan(0, count));
             }
             string plainHash = Convert.ToHexString(hash.GetHashAndReset());
-            return total == SupportedBridgeAinPlainLength && plainHash == SupportedBridgeAinPlainHash ? SupportedBridgeAinFingerprint : compressedHash;
+            if (total != plainLength) return compressedHash;
+            if (plainLength == SupportedBridgeAinPlainLength && plainHash == SupportedBridgeAinPlainHash) return SupportedBridgeAinFingerprint;
+            return plainLength == PreviousBridgeAinPlainLength && plainHash == PreviousBridgeAinPlainHash ? PreviousBridgeAinFingerprint : compressedHash;
         }
         catch (InvalidDataException) { return compressedHash; }
         finally { stream.Position = 0; }

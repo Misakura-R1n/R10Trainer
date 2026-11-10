@@ -35,9 +35,11 @@ HOOKS = [
     {"id": 0x2064, "name": "parts::detail::Update", "entry": 0x1F1B0E, "marker": 1, "arguments": 2},
 ]
 OP = {"PUSH": 0x00, "POP": 0x01, "REF": 0x02, "PUSHGLOBALPAGE": 0x04, "PUSHLOCALPAGE": 0x05,
-      "ASSIGN": 0x19, "LT": 0x13, "LTE": 0x15, "S_ASSIGN": 0x44, "S_EQUALE": 0x49, "DELETE": 0x77, "ADD": 0x09, "EQUALE": 0x18, "JUMP": 0x2C, "IFZ": 0x2D, "IFNZ": 0x2E,
-      "RETURN": 0x2F, "CALLFUNC": 0x30, "CALLHLL": 0x5A, "PUSHSTRUCTPAGE": 0x5B,
-      "CALLMETHOD": 0x5C, "FUNC": 0x61, "ENDFUNC": 0x7E, "A_REF": 0x79, "DG_NEW_FROM_METHOD": 0xFD}
+      "ASSIGN": 0x19, "LT": 0x13, "LTE": 0x15, "NOTE": 0x17, "AND": 0x0E, "S_ASSIGN": 0x44, "S_EQUALE": 0x49,
+      "DELETE": 0x77, "ADD": 0x09, "EQUALE": 0x18, "JUMP": 0x2C, "IFZ": 0x2D, "IFNZ": 0x2E,
+      "RETURN": 0x2F, "CALLFUNC": 0x30, "S_PUSH": 0x41, "C_REF": 0x57,
+      "CALLHLL": 0x5A, "PUSHSTRUCTPAGE": 0x5B, "CALLMETHOD": 0x5C, "FUNC": 0x61, "SWAP": 0x66,
+      "A_REF": 0x79, "DUP": 0x7A, "ENDFUNC": 0x7E, "DG_NEW_FROM_METHOD": 0xFD}
 DAMAGE_SITES = [0x3C0D12, 0x3C2DF8, 0x3C306A, 0x3C313A, 0x3E49D0,
                 0x42DCEA, 0x4311D4, 0x431EAA, 0x43879A]
 EXCLUDED_HP_SITES = [0x3BE7F4, 0x3BEA04, 0x3C16EA, 0x3E4D58, 0x4124D2]
@@ -181,12 +183,12 @@ class Assembler:
         return bytes(self.code)
 
 
-def new_function_record(entry: int, name: str, return_type: int, arguments: list[str]) -> bytes:
+def new_function_record(entry: int, name: str, return_type: int, arguments: list[str], local_types=()) -> bytes:
     result = i32(entry) + name.encode("ascii") + b"\0" + i32(return_type) + i32(-1) + i32(0)
-    result += i32(len(arguments)) + i32(len(arguments)) + i32(0) + i32(0)
-    for name in arguments:
+    result += i32(len(arguments)) + i32(len(arguments) + len(local_types)) + i32(0) + i32(0)
+    for name, kind in [*((name, 10) for name in arguments), *local_types]:
         result += name.encode("ascii") + b"\0" + name.encode("ascii") + b"\0"
-        result += i32(10) + i32(-1) + i32(0) + i32(0)
+        result += i32(kind) + i32(-1) + i32(0) + i32(0)
     return result
 
 
@@ -207,6 +209,7 @@ def prelude(hook: dict, header_pc: int, library: int) -> tuple[bytes, list[dict]
     emit("POP")  # Tick returns int; original body must start with an empty evaluation stack.
     if hook.get("sampler") is not None: emit("CALLFUNC", hook["sampler"])
     if hook.get("data") is not None: emit("CALLFUNC", hook["data"])
+    if hook.get("cardManagement") is not None: emit("CALLFUNC", hook["cardManagement"])
     if hook.get("controls") is not None: emit("CALLFUNC", hook["controls"])
     emit("JUMP", hook["entry"])
     emit("ENDFUNC", hook["id"])  # unreachable terminator for offline tools
@@ -232,7 +235,7 @@ def verify_prelude(rows: list[dict], hook: dict, library: int) -> None:
             require(stack == expected, "HLL argument order or evaluation stack mismatch")
             stack = [12345]
         elif op == "POP": stack.pop()
-        elif op == "CALLFUNC": require(args[0] in (hook.get("sampler"), hook.get("controls"), hook.get("data")) and not stack, "Invalid helper call")
+        elif op == "CALLFUNC": require(args[0] in (hook.get("sampler"), hook.get("controls"), hook.get("data"), hook.get("cardManagement")) and not stack, "Invalid helper call")
         elif op == "JUMP":
             require(args[0] == hook["entry"] and not stack, "Original entry stack is not empty")
             return
@@ -264,11 +267,11 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     extended = bytearray(code[:-6])  # move terminal FUNC 0 after the appended prefixes
     report_hooks, listing, added_functions, code_edits = [], [], [], []
     hooks = [dict(hook) for hook in HOOKS]
-    capabilities = 511 if profile == "controls" else 495 if profile == "full" else 1
+    capabilities = 1023 if profile == "controls" else 1007 if profile == "full" else 1
     hooks[0]["tickArguments"] = [("const", 1), ("const", capabilities)]
     redirected = set()
 
-    def add_function(name: str, result: int, arguments: list[str], body) -> int:
+    def add_function(name: str, result: int, arguments: list[str], body, *, local_types=()) -> int:
         function_id = len(functions) + len(added_functions)
         asm = Assembler(len(extended)); asm.emit("FUNC", function_id)
         body(asm); asm.emit("ENDFUNC", function_id)
@@ -276,7 +279,9 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         entry = asm.start + 6
         added_functions.append({"id": function_id, "name": name, "entry": entry,
                                 "returnType": result, "arguments": arguments, "bytes": emitted.hex().upper()})
-        func.extend(new_function_record(entry, name, result, arguments))
+        if local_types:
+            added_functions[-1]["locals"] = local_types
+        func.extend(new_function_record(entry, name, result, arguments, local_types))
         add_function.entries[function_id] = entry
         listing.append(f"; added {name} ({function_id:#x})")
         listing.extend(f"{row['pc']:08X} {row['op']} " + " ".join(str(a) for a in row["args"]) for row in asm.rows)
@@ -363,6 +368,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         install_features(add_function, replace_code, instruction)
         from data_ain import install_data
         hooks[1]["data"] = install_data(add_function)
+        from card_management_ain import install_card_management
+        hooks[1]["cardManagement"] = install_card_management(add_function)
 
     if profile == "controls":
         from controls_ain import install_controls
@@ -396,7 +403,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))
-    declaration = b"R10Bridge\0" + i32(6 if profile in {"full", "controls"} else 1) + b"Tick\0" + i32(10) + i32(3)
+    declaration = b"R10Bridge\0" + i32(7 if profile in {"full", "controls"} else 1) + b"Tick\0" + i32(10) + i32(3)
     declaration += b"marker\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     if profile in {"full", "controls"}:
         declaration += b"FilterHp\0" + i32(10) + i32(3)
@@ -407,6 +414,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         declaration += b"Cards\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
         declaration += b"Feature\0" + i32(10) + i32(3) + b"kind\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
         declaration += b"Data\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
+        declaration += b"CardEdit\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     hll = b"HLL0" + i32(len(libraries) + 1) + sections["HLL0"][8:] + declaration
     updated = {**sections, "CODE": b"CODE" + i32(len(extended)) + extended, "FUNC": bytes(func), "HLL0": hll}
     # Verify narrow mutations independently of byte serialization and preserve all text/metadata.

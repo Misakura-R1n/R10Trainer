@@ -3,6 +3,7 @@
   <ItemGroup><ProjectReference Include="../../src/R10.Bridge.Client/R10.Bridge.Client.csproj" /><ProjectReference Include="../../src/R10.Mcp/R10.Mcp.csproj" /><ProjectReference Include="../../src/R10.Bridge.Runtime/R10.Bridge.Runtime.csproj" /></ItemGroup>
   <ItemGroup>
     <Compile Include="../../src/R10.App/ViewModels/FeatureViewModel.cs" Link="App/FeatureViewModel.cs" />
+    <Compile Include="../../src/R10.App/ViewModels/CardManagementViewModel.cs" Link="App/CardManagementViewModel.cs" />
     <Compile Include="../../src/R10.App/ViewModels/ObservableObject.cs" Link="App/ObservableObject.cs" />
   </ItemGroup>
 </Project>

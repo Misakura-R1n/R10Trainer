@@ -4,7 +4,7 @@ using R10.Core;
 namespace R10.Bridge.Runtime;
 
 /// <summary>Explicit bridge mode. It never falls back to process-memory writes.</summary>
-public sealed class BridgeTrainerRuntime : ITrainerRuntime
+public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRuntime
 {
     internal static readonly IReadOnlyDictionary<FeatureId, (string Name, int Capability)> ComponentFeatures =
         new Dictionary<FeatureId, (string, int)>
@@ -67,6 +67,47 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
         finally { _gate.Release(); }
     }
     public Task<OperationResult> SetLockAsync(FeatureId id,bool enabled) => Task.FromResult(OperationResult.Fail("桥接模式暂未接入锁定功能。"));
+
+    public async Task<CardReply> ExecuteCardAsync(CardAccess expected, CardRequest request)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_closed || Volatile.Read(ref _closeRequests) > 0)
+                throw new BridgeException("closing", "组件连接正在关闭。");
+            var state = await _client.GetStateAsync().ConfigureAwait(false);
+            if (!MatchesCardAccess(state, expected))
+                throw new BridgeException("card_context_changed", "游戏会话、读档或场景已变化，请刷新卡片列表。");
+            var command = await _client.SubmitCardForSessionAsync(expected.Epoch.Session, expected.Epoch.Generation,
+                expected.Context, request).ConfigureAwait(false);
+            command = await AwaitCommandAsync(expected.Epoch.Session, command).ConfigureAwait(false);
+            if (command.State != "applied")
+                throw new BridgeException("card_rejected", "卡片操作被拒绝，请核对当前场景、卡片或★上限。");
+
+            try
+            {
+                if (!MatchesCardAccess(await _client.GetStateAsync().ConfigureAwait(false), expected))
+                    throw new BridgeException("card_context_changed", "游戏会话、读档或场景已变化，请刷新卡片列表。");
+                if (command.Cards is not { Rows.Count: > 0 } cards || cards.Rows[0].Index != request.Index ||
+                    (request.Operation != CardOperation.Page && (cards.Rows.Count != 1 || cards.Rows[0].Key != request.Key)) ||
+                    (request.Operation == CardOperation.Grant && !cards.Rows[0].Owned) ||
+                    (request.Operation == CardOperation.SetStar && cards.Star != request.Star))
+                    throw new BridgeException("invalid_card_result", "返回的卡片与请求不一致。");
+                return cards;
+            }
+            catch (BridgeException error) when (request.Writes)
+            {
+                throw new BridgeException(error.Code, error.Message, true, error);
+            }
+        }
+        finally { _gate.Release(); }
+    }
+
+    private static bool MatchesCardAccess(BridgeState state, CardAccess expected) =>
+        expected.Epoch.Ready && state.CardManagementAvailable && state.ScriptVersion == 1 && state.Phase == 1 &&
+        state.GameThreadResponsive == true && state.CardContext > 0 && state.CardContext == expected.Context &&
+        state.Session == expected.Epoch.Session && state.Pid == expected.Epoch.ProcessId &&
+        state.LoadGeneration == expected.Epoch.Generation;
 
     public async Task<OperationResult> SetToggleAsync(FeatureId id,bool enabled)
     {
@@ -212,7 +253,9 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime
             connection==ConnectionState.Error ? "游戏线程心跳未知或暂停，已停用操作。" : connection==ConnectionState.Unsupported ? "当前脚本尚未提供兼容的组件功能入口。" : null,"bridge",
             "组件提供游戏线程功能与状态读取。") {
                 LoadEpoch=state.Session is { } session && state.ScriptVersion==1 && (state.Capabilities.GetValueOrDefault() & 8)!=0
-                    ? new(state.Pid,session,state.LoadGeneration,state.Phase==1 && state.HeartbeatAgeMs is >=0 and <=2000) : null
+                    ? new(state.Pid,session,state.LoadGeneration,state.Phase==1 && state.HeartbeatAgeMs is >=0 and <=2000) : null,
+                CardManagementAvailable = state.CardManagementAvailable,
+                CardContext = state.CardManagementAvailable && state.Phase == 1 && state.GameThreadResponsive == true ? state.CardContext : 0
             });
     }
     private static bool CanWriteData(BridgeState state) => CanWrite(state,FeatureId.Resources) && state.DataReady;

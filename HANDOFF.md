@@ -1,18 +1,18 @@
 # R10 修改器交接
 
-核对日期：2026-11-08。本文件是唯一现行交接入口，供后续维护者和开发助手继续工作；状态改变时原位更新，历史由 Git 保存。用户明确要求保留独立交接文档，因此把工作现场和未完成事项放在这里，避免继续扩充面向使用者的 README。
+核对日期为 2026-11-10。本文件是唯一现行交接入口，记录本机工作现场与未完成事项。状态改变时原位更新，历史由 Git 保存。
 
 先读 [协作规范](AGENTS.md)，再根据任务查阅 [使用、构建及架构说明](README.md)；重要版本变化见 [CHANGELOG.md](CHANGELOG.md)。不要将以下快照当作永久有效的进程、工具或构建状态。
 
 ## 当前状态
 
-- 独立修改器当前版本 v0.5.1，C# / .NET 10 / WPF，目标 win-x86，仅支持 README 指纹对应的中文 BugFix 版。现有 18 项功能定义及 3 个独立锁，包含随机掉落去重。
-- 玩家通过修改器安装组件和使用功能，不依赖 MCP。MCP 只供助手调试。HP、掉卡去重、食券重抽、自动战斗重配、资源及等级通过组件执行；其余功能继续使用已核验版本的外部内存访问。
+- 独立修改器当前版本 v0.6.0，C# / .NET 10 / WPF，目标 win-x86，支持 README 指纹对应的中文 BugFix 版。保留 18 项功能定义及 3 个独立锁，另有卡片管理页。
+- 卡片管理可搜索、筛选及获取指定版本，并对已拥有的角色卡编辑共享 ★。单卡获取和设星通过游戏原函数执行。HP、掉卡去重、食券重抽、自动战斗重配、资源及等级也由组件执行。玩家通过修改器安装和使用，MCP 供助手调试。
 - 源码仓库：`https://github.com/Misakura-R1n/R10Trainer`，私有；当前开发分支 `codex/component-optimizations`。功能入库基线为 `52de51c`，后续文档提交见 `git log`。
 - 本轮只创建本地提交，没有推送；最近核对的远程分支为 `52de51c`。接手先重新确认本地和远程状态，不照抄此快照。
 - 用户要求每次完成修改、验证后创建 commit；后续推送仍按明确授权执行。原游戏、原存档和已有未归属变更必须保留。
 - 已完成三批优化：两项脚本补丁组件化（`04abec2`）、读档代次保护外部锁（`89927e0`）、资源与等级迁移（`16b38a0`）。自动检查、玩家界面、资源／星级数值、三项旧锁读档取消及退出清理已验证；重抽与重配的完整玩法交互仍未逐项实测。旧 0.4.0 玩家包保持原样。
-- 五项审查修复已独立提交：回滚归属（`5a6cafd`）、执行中命令期限（`eea991a`）、确认绑定原会话（`e486d31`）、死亡率阶段检查（`1f18359`）、AIN 单独升级识别（`58f3d16`）。本轮仅自动回归、原生辅助进程与临时文件验证，没有启动游戏；0.5.0 的实机结论不自动扩展为 0.5.1 已实测。
+- 0.5.1 独立提交了回滚归属（`5a6cafd`）、执行中命令期限（`eea991a`）、确认绑定原会话（`e486d31`）、死亡率阶段检查（`1f18359`）与 AIN 单独升级识别（`58f3d16`）。该版本完成自动回归、原生辅助进程和临时文件验证。0.6.0 另完成本页记录的卡片管理实机验证。
 
 ## 接手时先检查
 
@@ -33,26 +33,25 @@
 | .NET SDK | `D:\code\codex\AliceInCradle\.tools\dotnet\dotnet.exe`；构建可通过 `-DotNetPath` 显式指定，不假定 PATH 中的 dotnet 有对应 SDK |
 | MinGW | `D:\software\mingw64\bin` |
 | alice-tools | `D:\code\deepseek\rc\文本文件\aindiff\vendor\alice\alice.exe` |
-| 最近实机副本 | `artifacts/optimizations-game`，游戏名称 `R10OptimizationsSandbox`；仍为 0.5.0 组件，测试结束已关闭，本轮未更新或启动 |
-| 副本存档 | Windows 文档目录下 `AliceSoft/R10OptimizationsSandbox/SaveData`；原存档位置从 `bridge-sandbox.json` 的 `saveSource` 读取 |
-| 最近实机调试 MCP | `artifacts/R10Developer-optimizations/mcp/R10.Mcp.exe`；对应此前 0.5.0 验证，本轮未重新发布，不是构建脚本的常规输出目录 |
+| 最近实机副本 | `artifacts/card-management-game`，游戏名称 `R10CardManagementSandbox`，使用 0.6.0 玩家 `full` 组件 |
+| 副本存档 | Windows 文档目录下 `AliceSoft/R10CardManagementSandbox/SaveData`。原档为复制来的 `LocalSave00.asd`，本轮新增 `LocalSave01.asd` |
+| 最近实机调试 MCP | `artifacts/R10Developer-optimizations/mcp/R10.Mcp.exe`，本轮以独立 stdio 子进程和显式 `--game-dir` 绑定卡片管理副本 |
 
-`artifacts/optimizations-game/bridge-sandbox.json` 保留原游戏和原存档哈希。0.5.0 实机结束后复核原游戏 4 个核心文件、21 个原存档文件均匹配清单。后续实机工作前后仍应重新核对。修改器本机设置已恢复为当时测试前备份。
+`artifacts/card-management-game/bridge-sandbox.json` 记录原始位置、隔离位置与哈希。0.6.0 实机回读后复核原游戏 4 个核心文件、21 个原存档文件，以及副本旧档 `LocalSave00.asd`，均匹配清单。
 
-当前 `optimizations-game` 已由开发 `controls` 切换为玩家 `full` 插桩，能力值 495；准备清单中的 AIN 哈希记录的是最初的 `controls`，不代表切换后的当前文件。`controls` 验证使用 `artifacts/bridge/optimizations-controls/Rance10.ain`，能力值 511。旧 `control-game` / `R10ControlSandbox` 及其存档保持原样，不要混作新组件样本。
+0.6.0 组件能力值为 `full=1007`、`controls=1023`。下表记录实机使用的组件，AIN 解压后指纹见 README。旧 `optimizations-game` 仍保留 0.5.0 `full` 组件，旧 `control-game` 及其存档亦保留。
 
 | 当前副本文件 | SHA-256 |
 |---|---|
-| `Rance10.ain` | `72FE82B49F706763A84E03C850C078AC397C08602AE7C0991DC45D96E19C9AEB` |
-| `R10Bridge.dll` | `167F82AED1CE5C55139C3B72EF828174A2C66139A8777CF2BE5E78C190CAD2AA` |
+| `Rance10.ain` | `DB5339319252861CED6C091E7D0EA6EA46F9E66D1EEC805B560C3DE05F89E85E` |
+| `R10Bridge.dll` | `7E5D5966292E8874830901D5EAA6FC3C40EBDE048B9C84613133BE199E1D4C3A` |
 
 不要把开发文件覆盖到 `.r10trainer-hp` 管理的玩家安装目录，也不要为了清理现场删除旧副本、存档、备份或构建证据。
 
 ## 已交付产物及追溯
 
-- 当前玩家包：`artifacts/R10Trainer-v0.5.1-win-x86.zip`，配套同名解压目录。包内 `build-info.json` 记录实际构建提交、干净状态、源码及组件哈希；以该文件为构建身份依据，不手工回填提交号。玩家包不含 MCP、完整 AIN、游戏资源和存档。
-- 0.5.1 原生 DLL SHA-256 为 `254D035929AB12EDD156B285DB7DAC27ED923B165E91BBF8CAF422098FE311AE`，配方 SHA-256 为 `AA019942CA6416862BC3327E917428E2D844247357F7DF218CCB998AE049F37E`；AIN 插桩字节未变。旧副本表中的 DLL 是此前实机版本，不能混用其验证结论。
-- 产品代码最近实机基线为 `16b38a0`（0.5.0）；其玩家包构建提交为 `c9ec628`，旧包原样保留。0.5.1 采用提交后干净构建，最终发布日志为 `artifacts/live/review-fixes-release-build.log`。
+- 当前玩家包为 `artifacts/R10Trainer-v0.6.0-win-x86.zip`，配套同名解压目录。包内 `build-info.json` 记录实际构建提交、工作树状态及源码和组件哈希，以该文件识别构建。包内含玩家程序、原生 DLL 和安装配方。
+- 0.5.0 玩家包构建提交为 `c9ec628`。0.5.1 玩家包使用干净提交构建，发布日志为 `artifacts/live/review-fixes-release-build.log`。保留旧包。
 - 保留的旧包 `artifacts/R10Trainer-v0.4.0-win-x86.zip` 的 SHA-256 为 `5080D1DF2210703A9614F508C607713F6BB8E1500EDCB538F70611C4435002FF`。它生成于首次 Git 提交前，内置身份是 `uncommitted` / `dirty: true`，不能作为新包的构建身份。
 
 ## 继续实现时的重要入口
@@ -64,6 +63,7 @@
 | 功能路由及退出恢复 | `src/R10.Bridge.Runtime/UnifiedTrainerRuntime.cs`、`src/R10.Bridge.Runtime/BridgeTrainerRuntime.cs`；各组件开关分别记录关闭责任，失败时保留恢复责任 |
 | 原生队列、开关及批次生命周期 | `native/R10Bridge/bridge.c`；管道线程不直接访问 VM 对象，语义操作在游戏线程执行 |
 | 掉卡去重插桩 | `scripts/bridge/cards_ain.py`；围绕 `SceneGetCard@CreateCard` 管理同步批次，在两个卡池分支的随机抽选前过滤 |
+| 卡片管理 | `src/R10.App/ViewModels/CardManagementViewModel.cs`、`src/R10.Bridge.Runtime/CardManagement.cs`、`scripts/bridge/card_management_ain.py`。目录按具体卡片 ID 区分版本，设星按角色 ID。确认绑定进程、读档代次、操作场景及选中卡片，游戏线程重查资格和所有权后执行 |
 | 重抽、重配与资源等级 | `scripts/bridge/feature_ain.py`、`scripts/bridge/data_ain.py`；前者切换原条件分支，后者在游戏线程调用资源 setter 与批量星级方法；管道不保存 VM 对象句柄 |
 | 读档与外部锁 | `src/R10.Core/GameLoadFence.cs`、`src/R10.Core/TrainerRuntime.cs`；会话或代次变化取消旧锁，观察租约失效暂停写入，不能将跨进程写入视为原子事务 |
 | 延迟确认与回滚 | `FeatureViewModel` 捕获原 `LoadEpoch`，`SetValueForEpochAsync` 传至桥接最新状态核验；外部事务只有成功写入且仍保持目标值才可尝试恢复，失败／部分写入不得仅凭回读认领归属；死亡率恢复还要检查当前阶段 |
@@ -76,10 +76,12 @@
 
 ## 验证证据与边界
 
-下面列出已有验证记录；0.5.1 为自动回归与辅助进程验证，0.5.0 另有独立副本实机验证。完整实机范围以 README 的“已验证范围”为准。
+各版本实机范围见 README 的“已验证范围”。
 
 | 证据入口（本地、不入库） | 能证明的内容 |
 |---|---|
+| `artifacts/live/card-management-verified-build.log`、`card-management-release.log` | 0.6.0 的完整组件与玩家包构建。常规核心 72、桥接 74、完整安装恢复 26 项通过。独立 Win32 x86 助手加入后核心 73 项通过，含与常规检查重叠的 72 项。原生 x86 夹具 93 项通过。基础 AIN 22、掉卡 8、数据 6、条件分支 3、完整 AIN 指纹 2 项通过。副本准备 11 项通过。安装与副本准备均有因符号链接权限跳过的检查。 |
+| `artifacts/live/card-management-live.jsonl`、`card-management-mcp.jsonl`、`card-management-isolation.json` | 玩家页获取 Lv45 兰斯，Lv55 未获取。Lv42、Lv45 共享 ★47，经验清零，下一级经验 8,819。MCP 操作游戏菜单完成存读档，读旧档后旧确认未生效，读新档后数据保留。隔离记录核对原文件哈希。 |
 | `artifacts/live/review-fix1-build.log` 至 `review-fix5-build.log`；第二项使用 `review-fix2-validated-build.log` | 各独立修复对应检查。最终常规结果：核心 72、桥接含实际 ViewModel 源码 71、安装恢复 25 项通过，符号链接权限跳过 1 项。第二项初次构建日志保留了已解决的 freestanding x86 栈探测链接失败，不以该失败日志作为通过凭证。 |
 | `artifacts/live/review-fix2-validated-build.log` | 原生辅助进程 83 项通过，含执行中跨 3 秒期限的资源／部队／星级参数保持、未开始命令过期；基础 AIN 21、掉卡 8、数据 6、条件分支 3 项通过，副本准备 11 通过、1 权限跳过；完整 AIN 识别 2 项及真实文件安装恢复通过。 |
 | `artifacts/live/review-fixes-release-build.log` | 文档和版本提交后的 0.5.1 玩家发布检查；核心含 x86 辅助进程为 73 项，与常规 72 项重叠，不累加；未启动游戏。 |
@@ -99,12 +101,13 @@
 - 掉卡空池餐券补位、固定卡预留、消耗型奖励及第二部过滤分支；这些已有离线覆盖，不能称为实机通过。
 - HP 保护的致死、毒伤、反射、简单战斗及其他章节全部扣血路径。
 - 食券重抽、自动战斗重配的完整交互；已有真实生成字节码测试和实机开关检查不能替代完整玩法验证。
+- 卡片管理实机验证覆盖序曲地图的兰斯版本。其他角色、特殊条目和后续章节尚未逐项验证。
 - MCP 的其他章节、特殊战斗、所有技能及非标准留黑边窗口布局。
 
 ## MCP 当前状态与后续工作
 
-本会话预加载的 `r10_bridge` schema 仍是旧版本。本轮通过独立 stdio 子进程运行新 `R10Developer-optimizations`，已核验 8 个工具（包括 `set_value`）并完成实机操作；收尾已停止该子进程。不要把旧工具列表当成新二进制已经加载的证明。
+本轮预加载的 `r10_bridge` 指向旧目录。使用上表的独立 MCP 子进程绑定 `card-management-game`，核对实际 PID 和组件能力后，通过 `input` 操作玩家组件中的游戏菜单。卡片获取与设星由 WPF 玩家页触发，游戏效果从原生管道回读。
 
 后续需要用新 MCP 接口时，按 README 发布或选用明确核验的程序，重新加载对应 MCP 服务并检查 `tools/list`。语义读档和战斗操作要求 `controlsAvailable`；战斗操作还要求 `battleReady`。工具输入被拒绝时先看焦点、遮挡、会话和代次，不自动重发结果未知的写操作。优先使用 MCP，窗口激活或观察需要时再用 computer-use。
 
-五项审查修复与回归已完成，没有继续运行中的游戏测试。后续实机验证前先在明确选定副本中升级 0.5.1 DLL／配方，核对组件身份；可再补充未覆盖的完整玩法场景。外部内存读、检查、写之间仍非原子操作，不能承诺消除所有并发竞争。不要把未测场景标为通过，也不要覆盖旧包或擅自推送远程。完成相关工作时同步更新本文件的当前状态，保留 README 作为通用说明入口。
+后续实机验证前重新核对所选副本的游戏进程、组件与存档位置，再补充上述未覆盖场景。外部内存读、检查、写之间仍非原子操作。完成相关工作时同步更新本文件，通用操作继续查阅 README。
