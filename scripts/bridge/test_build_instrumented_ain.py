@@ -339,6 +339,14 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(export, {"name": b"CardEdit", "returnType": 10,
                                  "arguments": [(b"op", 10), (b"a", 10), (b"b", 10)]})
 
+    def test_card_management_grant_ignores_the_inheritance_marker(self):
+        pump = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardManagement")
+        instructions = bytes.fromhex(pump["bytes"])
+        self.assertNotIn(builder.instruction("S_PUSH", 0xFE), instructions)  # 削除
+        self.assertIn(builder.instruction("CALLFUNC", 0x70C9), instructions)  # Consumable reward
+        self.assertIn(builder.instruction("S_PUSH", 0x32B1), instructions)  # Test character
+        self.assertIn(builder.instruction("S_PUSH", 0x32B2), instructions)  # Test item
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

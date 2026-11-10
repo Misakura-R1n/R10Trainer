@@ -2,7 +2,7 @@
 
 PAGE, INSPECT, GRANT, SET_STAR = range(10, 14)
 PAGE_SIZE, ROW_LIMIT = 32, 4096
-TABLE, ID, CHARACTER, TYPE, DELETED = 0xF3E, 0xFEE, 0xF21, 0xFD1, 0xFE
+TABLE, ID, CHARACTER, TYPE = 0xF3E, 0xFEE, 0xF21, 0xFD1
 PLAYER_CARDS, CHARACTERS = 0x103, 0x101
 
 
@@ -103,7 +103,7 @@ def install_card_management(add_function):
         load_text(card_id, ID); load_text(character_id, CHARACTER)
         assign(flags, owned)
         text(card_id); asm.emit("CALLFUNC", 0x70C9); asm.emit("IFNZ", "publish")  # Consumable reward
-        table_field(DELETED, 0x156C); asm.emit("IFNZ", "publish")  # EX_RA2Int
+        # The table's integration marker affects inheritance, while the game can grant these cards.
         for test_id in (0x32B1, 0x32B2):
             text(card_id); asm.emit("S_PUSH", test_id); asm.emit("S_EQUALE"); asm.emit("IFNZ", "publish")
         table_field(TYPE, 0x156C); asm.emit("PUSH", 88); asm.emit("EQUALE"); asm.emit("IFNZ", "publish")

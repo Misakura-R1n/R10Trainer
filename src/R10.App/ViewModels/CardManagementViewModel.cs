@@ -67,7 +67,8 @@ public sealed class CardManagementViewModel : ObservableObject
         : _detail?.Rows[0] switch
         {
             { Owned: true } => "已拥有 · 此卡没有可编辑的角色★",
-            { CanGrant: true } => "未拥有 · 获取后可查看角色成长数据",
+            { CanGrant: true, HasRoleGrowth: true } => "未拥有 · 获取后可查看角色成长数据",
+            { CanGrant: true } => "未拥有 · 获取后加入卡组",
             not null => "此条目无法加入持久卡组",
             _ => ""
         };
@@ -141,7 +142,7 @@ public sealed class CardManagementViewModel : ObservableObject
     private Task ApplyStarAsync() => RunAsync(async access =>
     {
         if (Selected is not { } card || _detail?.Star is not { } current || !ValidStar(out int star)) return;
-        var related = _catalog.Where(item => item.Owned && (item.Flags & 4) != 0 && item.CharacterId == card.CharacterId).ToArray();
+        var related = _catalog.Where(item => item.Owned && item.HasRoleGrowth && item.CharacterId == card.CharacterId).ToArray();
         string versions = string.Join("、", related.Take(5).Select(item => item.Id));
         if (related.Length > 5) versions += $" 等 {related.Length} 张";
         if (!await _confirmStar($"将 {card.CharacterId} 的 ★ 从 {current} 设为 {star}。同角色版本共享 ★。当前持有 {versions}。修改会清空当前经验，可能影响继承。"))

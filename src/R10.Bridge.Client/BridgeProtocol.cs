@@ -61,6 +61,7 @@ public sealed record CardEntry(int Index, string Id, string CharacterId, int Fla
 {
     public bool Owned => (Flags & 1) != 0;
     public bool Collectible => (Flags & 2) != 0;
+    public bool HasRoleGrowth => (Flags & 4) != 0;
     public bool CanGrant => Collectible && !Owned;
 }
 

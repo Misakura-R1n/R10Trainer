@@ -41,6 +41,18 @@ static class ConfirmationTests
                 if (accept) Check(ReferenceEquals(runtime.Expected, epoch) && !vm.HasError);
             }
         });
+        await test("a collectible item can be granted without exposing role growth", () =>
+        {
+            var runtime = new Fixture(new GameLoadEpoch(42, "42:original", 3, true));
+            var vm = new CardManagementViewModel(runtime, _ => Task.FromResult(false));
+            vm.Update(runtime.Current);
+            vm.SetActive(true);
+            vm.Selected = vm.Rows.Single(card => card == Fixture.Item);
+            Check(vm.GrantCommand.CanExecute(null) && vm.DetailLabel.Contains("加入卡组") && !vm.CanEditStar);
+            vm.GrantCommand.Execute(null);
+            Check(vm.Selected?.Owned == true && !vm.GrantCommand.CanExecute(null) && !vm.CanEditStar);
+            return Task.CompletedTask;
+        });
         await test("card star confirmation keeps the selected card key and rejects changed read generations", async () =>
         {
             var epoch = new GameLoadEpoch(42, "42:original", 3, true);
@@ -82,14 +94,17 @@ static class ConfirmationTests
     {
         internal static readonly CardEntry Card = new(0, "Lv42 兰斯", "兰斯", 7, "4C76343220C0BCCBB9.C0BCCBB9");
         internal static readonly CardEntry OtherVersion = new(1, "Lv45 兰斯", "兰斯", 7, "4C76343520C0BCCBB9.C0BCCBB9");
+        internal static readonly CardEntry Item = new(2, "装备", "装备", 2, "D7B0B1B8.D7B0B1B8");
         public TrainerSnapshot Current { get; set; } = TrainerSnapshot.Empty with
         { ProcessId = epoch.ProcessId, LoadEpoch = epoch, CardManagementAvailable = true, CardContext = 5 };
         internal (CardAccess, CardRequest)? CardWrite;
         public Task<CardReply> ExecuteCardAsync(CardAccess expected, CardRequest request)
         {
             if (request.Writes) CardWrite = (expected, request);
-            return Task.FromResult(request.Operation == CardOperation.Page ? new CardReply(2, [Card, OtherVersion])
-                : new CardReply(2, [Card], request.Writes ? request.Star : 10, 0, 259, 999));
+            if (request.Operation == CardOperation.Page) return Task.FromResult(new CardReply(3, [Card, OtherVersion, Item]));
+            if (request.Index == Item.Index)
+                return Task.FromResult(new CardReply(3, [request.Operation == CardOperation.Grant ? Item with { Flags = 3 } : Item]));
+            return Task.FromResult(new CardReply(3, [Card], request.Writes ? request.Star : 10, 0, 259, 999));
         }
         public event Action<TrainerSnapshot>? SnapshotChanged { add { } remove { } }
         public int ConditionalWrites, UnconditionalWrites;
