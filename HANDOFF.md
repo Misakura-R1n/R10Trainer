@@ -23,7 +23,7 @@
 
 ## 本机工作现场
 
-以下路径在核对时存在，只属于当前开发机；克隆到其他机器后按 README 配置。`artifacts/`、`.tools/` 不入库，不要假定远程仓库包含这些文件。
+下表记录当前开发机的路径，已删除的副本单独标注。克隆到其他机器后按 README 配置。`artifacts/`、`.tools/` 不入库。
 
 | 用途 | 本机位置或说明 |
 |---|---|
@@ -33,15 +33,15 @@
 | .NET SDK | `D:\code\codex\AliceInCradle\.tools\dotnet\dotnet.exe`；构建可通过 `-DotNetPath` 显式指定，不假定 PATH 中的 dotnet 有对应 SDK |
 | MinGW | `D:\software\mingw64\bin` |
 | alice-tools | `D:\code\deepseek\rc\文本文件\aindiff\vendor\alice\alice.exe` |
-| 最近实机副本 | `artifacts/card-management-game`，游戏名称 `R10CardManagementSandbox`，使用 0.6.0 玩家 `full` 组件 |
-| 副本存档 | Windows 文档目录下 `AliceSoft/R10CardManagementSandbox/SaveData`。原档为复制来的 `LocalSave00.asd`，本轮新增 `LocalSave01.asd` |
-| 最近实机调试 MCP | `artifacts/R10Developer-optimizations/mcp/R10.Mcp.exe`，本轮以独立 stdio 子进程和显式 `--game-dir` 绑定卡片管理副本 |
+| 最近实机副本（已删除） | 原目录为 `artifacts/card-management-game`，游戏名称 `R10CardManagementSandbox`，验证时使用 0.6.0 玩家 `full` 组件 |
+| 副本存档（保留） | Windows 文档目录下 `AliceSoft/R10CardManagementSandbox/SaveData`，含复制来的 `LocalSave00.asd` 与验证中保存的 `LocalSave01.asd` |
+| 最近实机调试 MCP | `artifacts/R10Developer-optimizations/mcp/R10.Mcp.exe`，卡片管理验证时以独立 stdio 子进程和显式 `--game-dir` 绑定该副本，验证结束后已关闭 |
 
-`artifacts/card-management-game/bridge-sandbox.json` 记录原始位置、隔离位置与哈希。0.6.0 实机回读后复核原游戏 4 个核心文件、21 个原存档文件，以及副本旧档 `LocalSave00.asd`，均匹配清单。
+副本清单保存在 `artifacts/live/card-management-sandbox.json`，记录原始位置、隔离位置与哈希。删除副本后复核原游戏 4 个核心文件、21 个原存档文件，以及副本旧档 `LocalSave00.asd`，均匹配清单。
 
 0.6.0 组件能力值为 `full=1007`、`controls=1023`。下表记录实机使用的组件，AIN 解压后指纹见 README。旧 `optimizations-game` 仍保留 0.5.0 `full` 组件，旧 `control-game` 及其存档亦保留。
 
-| 当前副本文件 | SHA-256 |
+| 实机验证时的副本文件 | SHA-256 |
 |---|---|
 | `Rance10.ain` | `DB5339319252861CED6C091E7D0EA6EA46F9E66D1EEC805B560C3DE05F89E85E` |
 | `R10Bridge.dll` | `7E5D5966292E8874830901D5EAA6FC3C40EBDE048B9C84613133BE199E1D4C3A` |
@@ -106,7 +106,7 @@
 
 ## MCP 当前状态与后续工作
 
-本轮预加载的 `r10_bridge` 指向旧目录。使用上表的独立 MCP 子进程绑定 `card-management-game`，核对实际 PID 和组件能力后，通过 `input` 操作玩家组件中的游戏菜单。卡片获取与设星由 WPF 玩家页触发，游戏效果从原生管道回读。
+卡片管理验证时，预加载的 `r10_bridge` 指向旧目录。验证使用上表的独立 MCP 子进程绑定当时的副本，核对实际 PID 和组件能力后，通过 `input` 操作游戏菜单。卡片获取与设星由 WPF 玩家页触发，游戏效果从原生管道回读。
 
 后续需要用新 MCP 接口时，按 README 发布或选用明确核验的程序，重新加载对应 MCP 服务并检查 `tools/list`。语义读档和战斗操作要求 `controlsAvailable`；战斗操作还要求 `battleReady`。工具输入被拒绝时先看焦点、遮挡、会话和代次，不自动重发结果未知的写操作。优先使用 MCP，窗口激活或观察需要时再用 computer-use。
 
