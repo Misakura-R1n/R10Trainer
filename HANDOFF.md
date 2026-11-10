@@ -6,7 +6,8 @@
 
 ## 当前状态
 
-- 独立修改器当前版本 v0.6.0，C# / .NET 10 / WPF，目标 win-x86，支持 README 指纹对应的中文 BugFix 版。保留 18 项功能定义及 3 个独立锁，另有卡片管理页。
+- 独立修改器当前版本 v0.6.1，C# / .NET 10 / WPF，目标 win-x86，支持 README 指纹对应的中文 BugFix 版。保留 18 项功能定义及 3 个独立锁，另有卡片管理页。
+- 修改器图标使用用户选定的蓝色「R」。`src/R10.App/Assets/R10Trainer.ico` 保留游戏 EXE 图标组 101 的 16×16 真彩帧，由 `ApplicationIcon` 和主窗口共同引用。
 - 卡片管理可搜索、筛选及获取指定版本，并对已拥有的角色卡编辑共享 ★。单卡获取和设星通过游戏原函数执行。HP、掉卡去重、食券重抽、自动战斗重配、资源及等级也由组件执行。玩家通过修改器安装和使用，MCP 供助手调试。
 - 源码仓库：`https://github.com/Misakura-R1n/R10Trainer`，私有；当前开发分支 `codex/component-optimizations`。功能入库基线为 `52de51c`，后续文档提交见 `git log`。
 - 本轮只创建本地提交，没有推送；最近核对的远程分支为 `52de51c`。接手先重新确认本地和远程状态，不照抄此快照。
@@ -50,7 +51,7 @@
 
 ## 已交付产物及追溯
 
-- 当前玩家包为 `artifacts/R10Trainer-v0.6.0-win-x86.zip`，配套同名解压目录。包内 `build-info.json` 记录实际构建提交、工作树状态及源码和组件哈希，以该文件识别构建。包内含玩家程序、原生 DLL 和安装配方。
+- 当前玩家包为 `artifacts/R10Trainer-v0.6.1-win-x86.zip`，配套同名解压目录。包内 `build-info.json` 记录实际构建提交、工作树状态及源码和组件哈希，以该文件识别构建。0.6.1 沿用 0.6.0 的组件，旧玩家包保留。
 - 0.5.0 玩家包构建提交为 `c9ec628`。0.5.1 玩家包使用干净提交构建，发布日志为 `artifacts/live/review-fixes-release-build.log`。保留旧包。
 - 保留的旧包 `artifacts/R10Trainer-v0.4.0-win-x86.zip` 的 SHA-256 为 `5080D1DF2210703A9614F508C607713F6BB8E1500EDCB538F70611C4435002FF`。它生成于首次 Git 提交前，内置身份是 `uncommitted` / `dirty: true`，不能作为新包的构建身份。
 
@@ -80,6 +81,7 @@
 
 | 证据入口（本地、不入库） | 能证明的内容 |
 |---|---|
+| `artifacts/live/trainer-icon-release.log` | 0.6.1 的完整玩家包构建及回归。图标另用 PE 资源字节核对，并在 WPF 演示窗口验证大小图标。 |
 | `artifacts/live/card-management-verified-build.log`、`card-management-release.log` | 0.6.0 的完整组件与玩家包构建。常规核心 72、桥接 74、完整安装恢复 26 项通过。独立 Win32 x86 助手加入后核心 73 项通过，含与常规检查重叠的 72 项。原生 x86 夹具 93 项通过。基础 AIN 22、掉卡 8、数据 6、条件分支 3、完整 AIN 指纹 2 项通过。副本准备 11 项通过。安装与副本准备均有因符号链接权限跳过的检查。 |
 | `artifacts/live/card-management-live.jsonl`、`card-management-mcp.jsonl`、`card-management-isolation.json` | 玩家页获取 Lv45 兰斯，Lv55 未获取。Lv42、Lv45 共享 ★47，经验清零，下一级经验 8,819。MCP 操作游戏菜单完成存读档，读旧档后旧确认未生效，读新档后数据保留。隔离记录核对原文件哈希。 |
 | `artifacts/live/review-fix1-build.log` 至 `review-fix5-build.log`；第二项使用 `review-fix2-validated-build.log` | 各独立修复对应检查。最终常规结果：核心 72、桥接含实际 ViewModel 源码 71、安装恢复 25 项通过，符号链接权限跳过 1 项。第二项初次构建日志保留了已解决的 freestanding x86 栈探测链接失败，不以该失败日志作为通过凭证。 |

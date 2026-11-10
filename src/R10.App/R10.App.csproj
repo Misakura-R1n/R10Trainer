@@ -9,9 +9,13 @@
     <AssemblyName>R10Trainer</AssemblyName>
     <RootNamespace>R10.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.6.0</Version>
+    <ApplicationIcon>Assets/R10Trainer.ico</ApplicationIcon>
+    <Version>0.6.1</Version>
     <Description>兰斯 10 独立修改器</Description>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets/R10Trainer.ico" />
+  </ItemGroup>
   <ItemGroup><ProjectReference Include="../R10.Core/R10.Core.csproj" /><ProjectReference Include="../R10.Bridge.Runtime/R10.Bridge.Runtime.csproj" /><ProjectReference Include="../R10.Bridge.Install/R10.Bridge.Install.csproj" /></ItemGroup>
 </Project>
