@@ -12,7 +12,7 @@ class DataVm:
     def __init__(self, code, entry, command=0, value=0, full=False, ready=True, cap=999, null=None):
         self.code, self.pc = code, entry
         self.command, self.value, self.full, self.ready, self.cap = command, value, full, ready, cap
-        self.globals = {0xF0:100, 0x100:200, 0x101:300}
+        self.globals = {0xFE:100, 0x100:200, 0x101:300}
         if null is not None: self.globals[null] = -1
         self.values = [1,2,0,50]; self.sample = {}; self.writes = []; self.ack = None; self.data_ready = False
 
@@ -37,7 +37,7 @@ class DataVm:
             elif op==0x5C:
                 value=stack.pop() if args[0]==1 else None
                 method,receiver=stack.pop(),stack.pop()
-                if method==0x65E9: assert receiver==100; stack.append(self.ready)
+                if method==0x660A: assert receiver==100; stack.append(self.ready)
                 elif method in GETTERS: assert receiver==200; stack.append(self.values[GETTERS.index(method)])
                 elif method in SETTERS:
                     assert receiver==200; self.values[SETTERS.index(method)]=value; self.writes.append((method,value))
@@ -89,7 +89,7 @@ class DataTests(unittest.TestCase):
         self.assertEqual(vm.writes,[]); self.assertEqual(vm.ack,0)
 
     def test_no_game_or_null_globals_reject_without_touching_objects(self):
-        for kw in ({'ready':False},*({'null':g} for g in (0xF0,0x100,0x101))):
+        for kw in ({'ready':False},*({'null':g} for g in (0xFE,0x100,0x101))):
             vm=self.vm(command=1,value=3,full=True,**kw).run()
             self.assertEqual(vm.writes,[]); self.assertEqual(vm.ack,0); self.assertFalse(vm.data_ready)
 

@@ -12,16 +12,17 @@ public sealed class GameConnection : IDisposable
     public const string SupportedAinHash = "7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A";
     // The installer recompresses the exact same AI2 payload with the bundled .NET runtime.
     // Its compressed bytes may differ from Python/zlib, but no script byte may differ.
-    public const string SupportedBridgeAinPlainHash = "6FDB129167C8FAD210168D3E6EFF8D398001AE397D84D535A741CF961047A06F";
+    public const string SupportedBridgeAinPlainHash = "6016DF12F4F8C47C596AF8A7951C6149201768CF3996CA0C49D1E13D2FE12D4A";
     public const string SupportedBridgeAinFingerprint = "bridge-v1:" + SupportedBridgeAinPlainHash;
     public const int SupportedBridgeAinPlainLength = 28727376;
     public const uint SupportedBridgeCodeLength = 14579760;
-    private static readonly Dictionary<int, string> BridgeAinFingerprints = new()
-    {
-        [SupportedBridgeAinPlainLength] = SupportedBridgeAinFingerprint,
-        [28727422] = "bridge-v1:C0989948D8B10CCDFC5638A77FEF3E44B0F100AA92C609915F5DE361BB7007EC",
-        [28724545] = "bridge-v1:7C674704D331F697339643A541958B259B8B7179D72346CA9C573F5A4B5829AF"
-    };
+    private static readonly (int Length, string Fingerprint)[] BridgeAinIdentities =
+    [
+        (SupportedBridgeAinPlainLength, SupportedBridgeAinFingerprint),
+        (28727376, "bridge-v1:6FDB129167C8FAD210168D3E6EFF8D398001AE397D84D535A741CF961047A06F"),
+        (28727422, "bridge-v1:C0989948D8B10CCDFC5638A77FEF3E44B0F100AA92C609915F5DE361BB7007EC"),
+        (28724545, "bridge-v1:7C674704D331F697339643A541958B259B8B7179D72346CA9C573F5A4B5829AF")
+    ];
     private readonly FileStream? _exe, _ain;
     public IProcessMemory Memory { get; }
     public string AinPath { get; }
@@ -80,7 +81,7 @@ public sealed class GameConnection : IDisposable
         string.Equals(fingerprint, SupportedAinHash, StringComparison.OrdinalIgnoreCase) ||
         (allowBridge && IsBridgeAinFingerprint(fingerprint));
     internal static bool IsBridgeAinFingerprint(string fingerprint) =>
-        BridgeAinFingerprints.Values.Contains(fingerprint, StringComparer.OrdinalIgnoreCase);
+        BridgeAinIdentities.Any(item => string.Equals(item.Fingerprint, fingerprint, StringComparison.OrdinalIgnoreCase));
     public static string ReadAinFingerprint(string path, bool allowBridge = true)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -97,7 +98,7 @@ public sealed class GameConnection : IDisposable
         stream.ReadExactly(header);
         int plainLength = BinaryPrimitives.ReadInt32LittleEndian(header[8..12]);
         if (!header[..8].SequenceEqual("AI2\0\0\0\0\0"u8) ||
-            !BridgeAinFingerprints.TryGetValue(plainLength, out var expectedFingerprint) ||
+            !BridgeAinIdentities.Any(item => item.Length == plainLength) ||
             BinaryPrimitives.ReadUInt32LittleEndian(header[12..16]) != stream.Length - 16) { stream.Position = 0; return compressedHash; }
         try
         {
@@ -113,7 +114,7 @@ public sealed class GameConnection : IDisposable
             }
             if (total != plainLength) return compressedHash;
             string fingerprint = "bridge-v1:" + Convert.ToHexString(hash.GetHashAndReset());
-            return fingerprint == expectedFingerprint ? expectedFingerprint : compressedHash;
+            return BridgeAinIdentities.Contains((plainLength, fingerprint)) ? fingerprint : compressedHash;
         }
         catch (InvalidDataException) { return compressedHash; }
         finally { stream.Position = 0; }

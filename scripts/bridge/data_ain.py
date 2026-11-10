@@ -13,9 +13,9 @@ def data(asm, op, a=0, b=0, discard=False):
 def install_data(add_function):
     def pump(asm):
         data(asm, 6, 0, discard=True)
-        for global_id in (0xF0, 0x100, 0x101):
+        for global_id in (0xFE, 0x100, 0x101):
             asm.global_ref(global_id); asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "invalid")
-        asm.global_get(0xF0, 0x65E9); asm.emit("IFZ", "invalid")
+        asm.global_get(0xFE, 0x660A); asm.emit("IFZ", "invalid")  # GameContext.Phase
         for index, (setter, getter) in enumerate(zip(SETTERS, GETTERS), 1):
             data(asm, 0); asm.emit("PUSH", index); asm.emit("EQUALE"); asm.emit("IFZ", f"next{index}")
             if index <= 3:

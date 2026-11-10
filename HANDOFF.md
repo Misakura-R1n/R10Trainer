@@ -6,10 +6,11 @@
 
 ## 当前状态
 
-- 独立修改器当前版本 v0.6.2，C# / .NET 10 / WPF，目标 win-x86，支持 README 指纹对应的中文 BugFix 版。保留 18 项功能定义及 3 个独立锁，另有卡片管理页。
+- 独立修改器当前版本 v0.6.3，C# / .NET 10 / WPF，目标 win-x86，支持 README 指纹对应的中文 BugFix 版。保留 18 项功能定义及 3 个独立锁，另有卡片管理页。
 - 修改器图标使用用户选定的蓝色「R」。`src/R10.App/Assets/R10Trainer.ico` 保留游戏 EXE 图标组 101 的 16×16 真彩帧，由 `ApplicationIcon` 和主窗口共同引用。
 - 卡片管理可搜索、筛选及获取指定版本，并对已拥有的角色卡编辑共享 ★。单卡获取和设星通过游戏原函数执行。HP、掉卡去重、食券重抽、自动战斗重配、资源及等级也由组件执行。玩家通过修改器安装和使用，MCP 供助手调试。
 - 0.6.2 开放原卡表 `削除 = 88` 的 137 个版本，修复地图误读未分配战斗对象的问题（`7382b8c`）。外部数据读取遇到负句柄会停止解引用，选读战斗对象失败只清除战斗就绪状态。
+- 0.6.3 修正资源与等级就绪判定和宝箱发现率对象定位（`b74b9de`）。实机验收覆盖 16 项功能效果及 3 个锁定。用户暂缓食券重抽和自动战斗重配的游戏内流程。
 - 源码仓库：`https://github.com/Misakura-R1n/R10Trainer`，私有；当前开发分支 `codex/component-optimizations`。功能入库基线为 `52de51c`，后续文档提交见 `git log`。
 - 本轮只创建本地提交，没有推送；最近核对的远程分支为 `52de51c`。接手先重新确认本地和远程状态，不照抄此快照。
 - 用户要求每次完成修改、验证后创建 commit；后续推送仍按明确授权执行。原游戏、原存档和已有未归属变更必须保留。
@@ -35,24 +36,24 @@
 | .NET SDK | `D:\code\codex\AliceInCradle\.tools\dotnet\dotnet.exe`；构建可通过 `-DotNetPath` 显式指定，不假定 PATH 中的 dotnet 有对应 SDK |
 | MinGW | `D:\software\mingw64\bin` |
 | alice-tools | `D:\code\deepseek\rc\文本文件\aindiff\vendor\alice\alice.exe` |
-| 最近实机副本（测试后清理） | 原目录为 `artifacts/card-access-game`，游戏名称 `R10CardAccessSandbox`，验证时使用 0.6.2 玩家 `full` 组件 |
-| 副本存档（保留） | Windows 文档目录下 `AliceSoft/R10CardAccessSandbox/SaveData`，从前一轮隔离存档复制，`LocalSave02.asd` 为本轮新增 |
+| 最近实机副本（测试后清理） | 原目录为 `artifacts/feature-audit-game`，游戏名称 `R10FeatureAuditSandbox`，验证时使用 0.6.3 玩家 `full` 组件 |
+| 副本存档（保留） | Windows 文档目录下 `AliceSoft/R10FeatureAuditSandbox/SaveData`，从 `R10OptimizationsSandbox` 复制。0.6.2 卡片管理的新档在 `R10CardAccessSandbox/SaveData/LocalSave02.asd` |
 | 最近实机调试 MCP | `artifacts/R10Developer-optimizations/mcp/R10.Mcp.exe`，使用独立 stdio 子进程和显式 `--game-dir` 绑定临时副本 |
 
-本轮副本清单保存在 `artifacts/live/card-access-sandbox.json`。上一轮清单为 `artifacts/live/card-management-sandbox.json`，对应已清理的游戏目录和保留的隔离存档。
+本轮副本清单保存在 `artifacts/live/feature-audit-sandbox.json`。前两轮清单为 `card-access-sandbox.json` 和 `card-management-sandbox.json`，对应已清理的游戏目录和保留的隔离存档。
 
-0.6.2 组件能力值为 `full=1007`、`controls=1023`。下表记录实机使用的组件，AIN 解压后指纹见 README。旧 `optimizations-game` 仍保留 0.5.0 `full` 组件，旧 `control-game` 及其存档亦保留。
+0.6.3 组件能力值为 `full=1007`、`controls=1023`。下表记录实机使用的组件，AIN 解压后指纹见 README。旧 `optimizations-game` 仍保留 0.5.0 `full` 组件，旧 `control-game` 及其存档亦保留。
 
 | 实机验证时的副本文件 | SHA-256 |
 |---|---|
-| `Rance10.ain` | `4B38C27142113C8C9503E01490F31CE19CB0E7ED662E5380ABF2880ADA7134C7` |
+| `Rance10.ain` | `FD06656F654326CEE2A3F26B7952F1206F26246E646DE8202E8777D07909F386` |
 | `R10Bridge.dll` | `7E5D5966292E8874830901D5EAA6FC3C40EBDE048B9C84613133BE199E1D4C3A` |
 
 不要把开发文件覆盖到 `.r10trainer-hp` 管理的玩家安装目录，也不要为了清理现场删除旧副本、存档、备份或构建证据。
 
 ## 已交付产物及追溯
 
-- 当前玩家包为 `artifacts/R10Trainer-v0.6.2-win-x86.zip`，配套同名解压目录。包内 `build-info.json` 记录实际构建提交、工作树状态及源码和组件哈希，以该文件识别构建。0.6.2 更新 AIN，旧玩家包保留。
+- 当前玩家包为 `artifacts/R10Trainer-v0.6.3-win-x86.zip`，配套同名解压目录。包内 `build-info.json` 记录实际构建提交、工作树状态及源码和组件哈希，以该文件识别构建。0.6.3 更新 AIN，旧玩家包保留。
 - 0.5.0 玩家包构建提交为 `c9ec628`。0.5.1 玩家包使用干净提交构建，发布日志为 `artifacts/live/review-fixes-release-build.log`。保留旧包。
 - 保留的旧包 `artifacts/R10Trainer-v0.4.0-win-x86.zip` 的 SHA-256 为 `5080D1DF2210703A9614F508C607713F6BB8E1500EDCB538F70611C4435002FF`。它生成于首次 Git 提交前，内置身份是 `uncommitted` / `dirty: true`，不能作为新包的构建身份。
 
@@ -82,6 +83,8 @@
 
 | 证据入口（本地、不入库） | 能证明的内容 |
 |---|---|
+| `artifacts/live/feature-audit-verified-build.log`、`feature-audit-final-build.log`、`feature-audit-release.log` | 0.6.3 的完整组件回归、修改后常规检查及干净提交打包。 |
+| `artifacts/live/feature-audit-*.log`、`feature-audit-gameplay.jsonl`、`feature-audit-mcp.jsonl` | 当前玩家功能入口、实际存档对象和游戏线程回读。地图数值、资源、等级、锁定、HP 和掉卡效果见 README。早期地图日志的宝箱失败已修复并在 `feature-audit-treasure.log` 和战斗结算复测通过。 |
 | `artifacts/live/card-access-verified-build.log`、`card-access-release.log` | 0.6.2 的完整 AIN 组件、安装恢复、原生 x86 夹具及干净提交打包。核心回归覆盖地图空句柄、战斗对象部分读取失败、关键对象读取失败。 |
 | `artifacts/live/card-access-live.jsonl`、`card-access-mcp.jsonl` | 玩家界面在地图显示就绪，逐条回读 137 个版本的获取资格。魔王兰斯 ★47 和装备卡获取结果在 MCP 保存及重载后保留，普通兰斯保留原等级和经验。 |
 | `artifacts/live/trainer-icon-release.log` | 0.6.1 的完整玩家包构建及回归。图标另用 PE 资源字节核对，并在 WPF 演示窗口验证大小图标。 |
@@ -105,7 +108,7 @@
 
 - 掉卡空池餐券补位、固定卡预留、消耗型奖励及第二部过滤分支；这些已有离线覆盖，不能称为实机通过。
 - HP 保护的致死、毒伤、反射、简单战斗及其他章节全部扣血路径。
-- 食券重抽、自动战斗重配的完整交互；已有真实生成字节码测试和实机开关检查不能替代完整玩法验证。
+- 用户暂缓食券重抽、自动战斗重配的完整交互。两项通过实际字节码回归及游戏侧开关检查。
 - 卡片管理在序曲地图验证了普通兰斯、魔王兰斯和装备样例。其余开放条目验证了资格，尚未逐个获取、改星或带入后续章节。
 - MCP 的其他章节、特殊战斗、所有技能及非标准留黑边窗口布局。
 
