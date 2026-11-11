@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using R10.Core.Memory;
 
 namespace R10.Bridge.Install;
 
@@ -16,11 +17,11 @@ public sealed class BridgeInstaller
     private const string JournalName=".r10trainer-hp";
     private static readonly string[] TargetNames=["R10Bridge.dll","Rance10.ain","AliceStart.ini"];
     private readonly string _package;
-    private readonly InstallProfile _profile;
+    private readonly IReadOnlyList<GameVersion> _versions;
     private readonly Action<string>? _failurePoint;
-    public BridgeInstaller(string packageDirectory) : this(packageDirectory,InstallProfile.Supported) { }
-    internal BridgeInstaller(string packageDirectory,InstallProfile profile,Action<string>? failurePoint=null)
-    { _package=Path.GetFullPath(packageDirectory); _profile=profile; _failurePoint=failurePoint; }
+    public BridgeInstaller(string packageDirectory) : this(packageDirectory,GameVersions.All) { }
+    internal BridgeInstaller(string packageDirectory,IReadOnlyList<GameVersion> versions,Action<string>? failurePoint=null)
+    { _package=Path.GetFullPath(packageDirectory); _versions=versions; _failurePoint=failurePoint; }
 
     public Task<BridgeInstallStatus> InspectAsync(string gameDirectory) => Task.Run(()=>
     {
@@ -31,7 +32,7 @@ public sealed class BridgeInstaller
     public Task<BridgeInstallStatus> InstallAsync(string gameDirectory) => Task.Run(()=>WithLock(gameDirectory,Install));
     public Task<BridgeInstallStatus> RestoreAsync(string gameDirectory) => Task.Run(()=>WithLock(gameDirectory,Restore));
 
-    private BridgeInstallStatus WithLock(string directory,Func<string,BridgeInstallStatus> action)
+    private BridgeInstallStatus WithLock(string directory,Func<string,string,BridgeInstallStatus> action)
     {
         directory=ValidateDirectory(directory);
         string lockName="Local\\R10Trainer.HpInstall."+AinPatch.Hash(Encoding.UTF8.GetBytes(directory.ToUpperInvariant()));
@@ -45,8 +46,9 @@ public sealed class BridgeInstaller
             EnsureNotRunning(directory);
             // Exclusive access also prevents the executable being opened for launch during replacement.
             using var executable=new FileStream(Path.Combine(directory,"Rance10.exe"),FileMode.Open,FileAccess.Read,FileShare.None);
-            if (!AinPatch.Same(Convert.ToHexString(SHA256.HashData(executable)),_profile.ExeHash)) throw new InvalidDataException("Rance10.exe 不是已适配的中文 BugFix 版。");
-            return action(directory);
+            string exeHash=Convert.ToHexString(SHA256.HashData(executable));
+            if (!_versions.Any(version=>AinPatch.Same(exeHash,version.ExeSha256))) throw new InvalidDataException("Rance10.exe 不属于已适配的游戏版本。");
+            return action(directory,exeHash);
         }
         finally { if (owned) gate.ReleaseMutex(); }
     }
@@ -55,58 +57,72 @@ public sealed class BridgeInstaller
     {
         string? running=RunningReason(directory);
         bool stopped=running is null;
-        string exePath=Path.Combine(directory,"Rance10.exe");
-        if (!AinPatch.Same(HashFile(exePath),_profile.ExeHash)) return new(BridgeInstallState.Unsupported,"仅支持已适配的中文 BugFix 版，尚未修改游戏文件。",false,false,false);
+        string exeHash=HashFile(Path.Combine(directory,"Rance10.exe"));
+        if (!_versions.Any(version=>AinPatch.Same(exeHash,version.ExeSha256)))
+            return new(BridgeInstallState.Unsupported,"Rance10.exe 不属于已适配的游戏版本。",false,false,false);
         string journal=Path.Combine(directory,JournalName);
         if (Directory.Exists(journal))
         {
-            var manifest=ReadManifest(journal);
+            var (manifest,version)=ReadManifest(journal,exeHash);
             ValidateBackups(journal,manifest);
             var states=GetOwnedStates(directory,manifest);
             bool installed=states.All(x=>x.Installed);
             // Restore uses the journal, so an old or missing package cannot strand recovery.
-            if (installed && !MatchesCurrentComponent(directory))
-                return new(BridgeInstallState.RecoveryRequired,running ?? "已安装组件与当前版本不一致，或组件安装包不完整。请先恢复游戏文件，再安装新版组件。",false,stopped,false);
+            if (installed && !MatchesCurrentComponent(directory,version))
+                return new(BridgeInstallState.RecoveryRequired,running ?? "已安装组件与当前版本不一致，或组件安装包不完整。请先恢复安装前文件，再安装新版组件。",false,stopped,false);
             return new(installed ? BridgeInstallState.Installed : BridgeInstallState.RecoveryRequired,
-                installed ? running ?? "游戏组件已安装，可启动游戏并使用组件功能。" : running ?? "检测到未完成的组件操作，请先恢复原版再重新安装。",
+                installed ? running ?? $"{version.Name}的游戏组件已安装。" : running ?? "检测到未完成的组件操作，请先恢复安装前文件。",
                 false,stopped,installed);
         }
         if (File.Exists(journal)) throw new IOException("游戏组件备份目录被同名文件占用。");
-        var (patch,dll)=ReadPackage();
         byte[] ain=ReadBounded(Path.Combine(directory,"Rance10.ain"),64*1024*1024);
         byte[] ini=ReadBounded(Path.Combine(directory,"AliceStart.ini"),1024*1024);
-        ValidateCodeName(Encoding.Latin1.GetString(ini));
-        bool source=AinPatch.Same(AinPatch.Hash(ain),_profile.SourceHash);
-        if (!source && AinPatch.Same(AinPatch.Hash(AinPatch.Decode(ain)),patch.TargetPlainSha256)
-            && File.Exists(Path.Combine(directory,"R10Bridge.dll")) && AinPatch.Same(HashFile(Path.Combine(directory,"R10Bridge.dll")),AinPatch.Hash(dll)) && HasBridgeDeclaration(ini))
-            return new(BridgeInstallState.Installed,"游戏组件已可用；此目录由其他工具准备，没有本修改器的原版备份。",false,false,true);
-        if (!source) return new(BridgeInstallState.Unsupported,"游戏脚本不是已适配的原版，也不是本版 游戏组件。",false,false,false);
-        if (File.Exists(Path.Combine(directory,"R10Bridge.dll"))) return new(BridgeInstallState.Unsupported,"目录中已有 R10Bridge.dll，无法确认来源，未覆盖此文件。",false,false,false);
+        GameStartConfiguration.ValidateCodeName(Encoding.Latin1.GetString(ini));
+        var sourceVersion=FindVersion(exeHash,AinPatch.Hash(ain));
+        string dllPath=Path.Combine(directory,"R10Bridge.dll");
+        if (sourceVersion is null)
+        {
+            if (File.Exists(dllPath) && HasBridgeDeclaration(ini))
+            {
+                var plain=AinPatch.Decode(ain);
+                string plainHash=AinPatch.Hash(plain);
+                var installedVersion=_versions.SingleOrDefault(version=>AinPatch.Same(exeHash,version.ExeSha256)
+                    && plain.Length==version.TargetPlainLength && AinPatch.Same(plainHash,version.TargetPlainSha256));
+                if (installedVersion is not null && AinPatch.Same(HashFile(dllPath),ReadPackage(installedVersion).Patch.DllSha256))
+                    return new(BridgeInstallState.Installed,$"{installedVersion.Name}的游戏组件已可用。当前目录没有可恢复的备份。",false,false,true);
+            }
+            return new(BridgeInstallState.Unsupported,"Rance10.exe 和 Rance10.ain 的组合不属于已适配的游戏版本。",false,false,false);
+        }
+        if (File.Exists(dllPath) || Directory.Exists(dllPath))
+            return new(BridgeInstallState.Unsupported,"目录中已有 R10Bridge.dll，无法确认来源，未覆盖此文件。",false,false,false);
         _=InstrumentIni(ini);
-        return new(BridgeInstallState.NotInstalled,running ?? "尚未安装 游戏组件。安装时自动备份原文件，不改变存档位置。",stopped,false,false);
+        _=ReadPackage(sourceVersion);
+        return new(BridgeInstallState.NotInstalled,running ?? $"已识别{sourceVersion.Name}。安装时会备份当前游戏文件。",stopped,false,false);
     }
 
-    private BridgeInstallStatus Install(string directory)
+    private BridgeInstallStatus Install(string directory,string exeHash)
     {
         string journal=Path.Combine(directory,JournalName);
         if (Directory.Exists(journal))
         {
-            var existing=ReadManifest(journal); ValidateBackups(journal,existing);
+            var (existing,installedVersion)=ReadManifest(journal,exeHash); ValidateBackups(journal,existing);
             if (GetOwnedStates(directory,existing).All(x=>x.Installed))
-                return MatchesCurrentComponent(directory)
+                return MatchesCurrentComponent(directory,installedVersion)
                     ? new(BridgeInstallState.Installed,"游戏组件已经安装。",false,true,true)
-                    : new(BridgeInstallState.RecoveryRequired,"已安装组件与当前版本不一致，或组件安装包不完整。请先恢复游戏文件，再安装新版组件。",false,true,false);
-            throw new IOException("上次组件操作尚未完成，请先恢复原版。");
+                    : new(BridgeInstallState.RecoveryRequired,"已安装组件与当前版本不一致，或组件安装包不完整。请先恢复安装前文件，再安装新版组件。",false,true,false);
+            throw new IOException("上次组件操作尚未完成，请先恢复安装前文件。");
         }
         if (File.Exists(journal)) throw new IOException("备份目录名称被文件占用。");
-        var (patch,dll)=ReadPackage();
         string ainPath=Path.Combine(directory,"Rance10.ain"),iniPath=Path.Combine(directory,"AliceStart.ini"),dllPath=Path.Combine(directory,"R10Bridge.dll");
         foreach (string target in TargetNames) RejectReparse(Path.Combine(directory,target));
         if (File.Exists(dllPath) || Directory.Exists(dllPath)) throw new IOException("目录中已有 R10Bridge.dll，未覆盖未知文件。");
         var ain=ReadBounded(ainPath,64*1024*1024); var ini=ReadBounded(iniPath,1024*1024);
+        var version=FindVersion(exeHash,AinPatch.Hash(ain))
+            ?? throw new InvalidDataException("Rance10.exe 和 Rance10.ain 的组合不属于已适配的游戏版本。");
+        var (patch,dll)=ReadPackage(version);
         var patchedAin=AinPatch.Apply(ain,patch); var patchedIni=InstrumentIni(ini);
         byte[]?[] originals=[null,ain,ini]; byte[][] replacements=[dll,patchedAin,patchedIni];
-        var manifest=new InstallManifest(1,_profile.ExeHash,TargetNames.Select((name,index)=>new InstalledFile(name,
+        var manifest=new InstallManifest(1,exeHash,TargetNames.Select((name,index)=>new InstalledFile(name,
             originals[index] is { } original ? AinPatch.Hash(original) : null,AinPatch.Hash(replacements[index]))).ToArray());
         string staging=Path.Combine(directory,JournalName+".preparing-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
@@ -128,23 +144,23 @@ public sealed class BridgeInstaller
                 _failurePoint?.Invoke("installed:"+file.Name);
             }
             if (!GetOwnedStates(directory,manifest).All(x=>x.Installed)) throw new IOException("组件安装后校验失败。");
-            return new(BridgeInstallState.Installed,"游戏组件已安装。现在启动游戏，即可在修改器中开启 HP 保护和随机掉落去重。",false,true,true);
+            return new(BridgeInstallState.Installed,$"{version.Name}的游戏组件已安装。启动游戏后即可使用组件功能。",false,true,true);
         }
         catch (Exception error)
         {
             try { RestoreFiles(directory,journal,manifest); }
-            catch (Exception rollback) { throw new IOException("组件操作未完成，备份已保留。请使用“恢复原版”重试。原错误："+error.Message+"；恢复错误："+rollback.Message,error); }
+            catch (Exception rollback) { throw new IOException("组件操作未完成，备份已保留。请使用“恢复安装前文件”重试。原错误："+error.Message+"；恢复错误："+rollback.Message,error); }
             throw new IOException("组件安装未完成，已恢复原文件。"+error.Message,error);
         }
     }
 
-    private BridgeInstallStatus Restore(string directory)
+    private BridgeInstallStatus Restore(string directory,string exeHash)
     {
         string journal=Path.Combine(directory,JournalName);
-        if (!Directory.Exists(journal)) throw new IOException("没有此修改器建立的原版备份，未修改文件。");
-        var manifest=ReadManifest(journal); ValidateBackups(journal,manifest);
+        if (!Directory.Exists(journal)) throw new IOException("没有此修改器建立的安装前备份。");
+        var (manifest,version)=ReadManifest(journal,exeHash); ValidateBackups(journal,manifest);
         RestoreFiles(directory,journal,manifest);
-        return new(BridgeInstallState.NotInstalled,"已恢复原版游戏文件；存档保持原位置。原件备份已归档保留。",true,false,false);
+        return new(BridgeInstallState.NotInstalled,$"已恢复{version.Name}安装组件前的文件。备份已归档保留。",true,false,false);
     }
 
     private void RestoreFiles(string directory,string journal,InstallManifest manifest)
@@ -185,39 +201,41 @@ public sealed class BridgeInstaller
         if (!AinPatch.Same(HashFile(target),expected)) throw new IOException("替换后的文件校验失败。");
     }
 
-    private bool MatchesCurrentComponent(string directory)
+    private bool MatchesCurrentComponent(string directory,GameVersion version)
     {
         // The journal proves ownership, not currency. Compare the installed script against
         // this app's supported plain identity, independent of compression or old backup hashes.
         // Do not require a readable patch recipe to offer restoration of an owned installation.
         var ain=ReadBounded(Path.Combine(directory,"Rance10.ain"),64*1024*1024);
-        if (!AinPatch.Same(AinPatch.Hash(AinPatch.Decode(ain)),_profile.TargetPlainHash)) return false;
+        if (!AinPatch.Same(AinPatch.Hash(AinPatch.Decode(ain)),version.TargetPlainSha256)) return false;
         string packageDll=Path.Combine(_package,"bridge","R10Bridge.dll");
         return File.Exists(packageDll) && AinPatch.Same(HashFile(packageDll),HashFile(Path.Combine(directory,"R10Bridge.dll")));
     }
 
-    private (PatchRecipe Patch,byte[] Dll) ReadPackage()
+    private (PatchRecipe Patch,byte[] Dll) ReadPackage(GameVersion version)
     {
         string patchPath=Path.Combine(_package,"bridge","hp-patch.json"),dllPath=Path.Combine(_package,"bridge","R10Bridge.dll");
         RejectReparse(patchPath); RejectReparse(dllPath);
-        var patch=AinPatch.Read(patchPath,_profile);
+        var patch=AinPatch.Read(patchPath,version);
         var dll=ReadBounded(dllPath,1024*1024);
         if (!AinPatch.Same(AinPatch.Hash(dll),patch.DllSha256)) throw new IOException("游戏组件 DLL 校验失败，请重新解压完整修改器。");
         return (patch,dll);
     }
-    private InstallManifest ReadManifest(string journal)
+    private GameVersion? FindVersion(string exeHash,string? sourceHash) =>
+        _versions.SingleOrDefault(version=>AinPatch.Same(exeHash,version.ExeSha256) && AinPatch.Same(sourceHash,version.SourceSha256));
+
+    private (InstallManifest Manifest,GameVersion Version) ReadManifest(string journal,string exeHash)
     {
         RejectReparse(journal);
         var bytes=ReadBounded(Path.Combine(journal,"manifest.json"),16*1024);
         var manifest=JsonSerializer.Deserialize<InstallManifest>(bytes,AinPatch.Json) ?? throw new IOException("组件备份清单无效。");
-        if (manifest.Schema!=1 || !AinPatch.Same(manifest.ExeHash,_profile.ExeHash) || manifest.Files is null || manifest.Files.Length!=3
-            || manifest.Files.Any(x=>x is null || x.Name is null || !ValidHash(x.InstalledHash))
+        if (manifest.Schema!=1 || !AinPatch.Same(manifest.ExeHash,exeHash) || manifest.Files is null || manifest.Files.Length!=3
+            || manifest.Files.Any(x=>x is null || !ValidHash(x.InstalledHash) || (x.OriginalHash is not null && !ValidHash(x.OriginalHash)))
             || !manifest.Files.Select(x=>x.Name).SequenceEqual(TargetNames) || manifest.Files[0].OriginalHash is not null
             || manifest.Files[1].OriginalHash is null || manifest.Files[2].OriginalHash is null
-            || !AinPatch.Same(manifest.Files[1].OriginalHash,_profile.SourceHash)
-            || manifest.Files.Any(x=>!ValidHash(x.InstalledHash) || (x.OriginalHash is not null && !ValidHash(x.OriginalHash))))
+            || FindVersion(exeHash,manifest.Files[1].OriginalHash) is not { } version)
             throw new IOException("组件备份清单不属于此版本，停止操作。");
-        return manifest;
+        return (manifest,version);
     }
     private static bool ValidHash(string? hash) => hash is not null && hash.Length==64 && hash.All(Uri.IsHexDigit);
     private static void ValidateBackups(string journal,InstallManifest manifest)
@@ -239,9 +257,9 @@ public sealed class BridgeInstaller
     }
     internal static byte[] InstrumentIni(byte[] raw)
     {
-        // Latin-1 is a reversible byte mapping: existing CP936 bytes and line endings remain untouched.
+        // Latin-1 is a reversible byte mapping for the original text and line endings.
         var text=Encoding.Latin1.GetString(raw);
-        ValidateCodeName(text);
+        GameStartConfiguration.ValidateCodeName(text);
         var matches=Regex.Matches(text,@"(?m)^([ \t]*LoadDLL[ \t]*=[ \t]*\{)(\r?\n)");
         if (matches.Count!=1 || !Regex.IsMatch(text,@"(?m)^[ \t]*GameName[ \t]*=[ \t]*""[^""\r\n]+""")) throw new IOException("启动配置格式不受支持，未修改文件。");
         var match=matches[0]; int insertion=match.Index+match.Groups[1].Length;
@@ -251,13 +269,6 @@ public sealed class BridgeInstaller
         if (Regex.IsMatch(declarations,""""(?:[^"\r\n]*[\\/])?R10Bridge\.dll"""",RegexOptions.IgnoreCase))
             throw new IOException("启动配置中已有 游戏组件声明，无法确认来源。");
         return Encoding.Latin1.GetBytes(text.Insert(insertion,match.Groups[2].Value+"    \"R10Bridge.dll\","));
-    }
-    private static void ValidateCodeName(string text)
-    {
-        var declarations=Regex.Matches(text,@"(?mi)^[ \t]*CodeName[ \t]*=");
-        var value=Regex.Match(text,"""(?m)^[ \t]*CodeName[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*(?:;[^\r\n]*)?\r?$""");
-        if (declarations.Count!=1 || !value.Success || !string.Equals(value.Groups[1].Value,"Rance10.ain",StringComparison.OrdinalIgnoreCase))
-            throw new IOException("启动配置必须且只能声明一次 CodeName = \"Rance10.ain\"；未修改游戏文件。");
     }
     private static bool HasBridgeDeclaration(byte[] raw) => Regex.IsMatch(Encoding.Latin1.GetString(raw),"""(?m)^[ \t]*"R10Bridge\.dll"[ \t]*,?[ \t]*\r?$""",RegexOptions.IgnoreCase);
     private static string ValidateDirectory(string directory)

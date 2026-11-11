@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using R10.Bridge.Install;
+using R10.Core.Memory;
 
 int passed=0,failed=0,skipped=0;
 void Check(bool condition,string message) { if (!condition) throw new Exception(message); }
@@ -21,7 +22,7 @@ await Test("install/restore preserves every original byte and existing save conf
     using var f=new Fixture(); var installer=f.Installer();
     var initial=await installer.InspectAsync(f.Game); Check(initial.CanInstall && !initial.IsInstalled,"initial status");
     var result=await installer.InstallAsync(f.Game); Check(result.IsInstalled,"install status");
-    Check(AinPatch.Hash(AinPatch.Decode(File.ReadAllBytes(f.File("Rance10.ain"))))==f.Profile.TargetPlainHash,"output identity");
+    Check(AinPatch.Hash(AinPatch.Decode(File.ReadAllBytes(f.File("Rance10.ain"))))==f.Profile.TargetPlainSha256,"output identity");
     var ini=File.ReadAllBytes(f.File("AliceStart.ini"));
     Check(Encoding.Latin1.GetString(ini).Replace("    \"R10Bridge.dll\",\r\n","")==Encoding.Latin1.GetString(f.Ini),"only DLL line changes");
     Check((await installer.InspectAsync(f.Game)).CanRestore,"restore offered");
@@ -57,11 +58,11 @@ await Test("AIN-only upgrade with unchanged DLL is detected and restores before 
     var oldAin=File.ReadAllBytes(f.File("Rance10.ain"));
     var sourcePlain=AinPatch.Decode(f.Ain); var addition=Encoding.ASCII.GetBytes("authored-hook-v2");
     var target=sourcePlain.Concat(addition).ToArray();
-    var profile=f.Profile with { TargetPlainHash=AinPatch.Hash(target) };
-    var recipe=new PatchRecipe(1,profile.SourceHash,AinPatch.Hash(sourcePlain),profile.TargetPlainHash,sourcePlain.Length,target.Length,
-        profile.ExeHash,AinPatch.Hash(f.Dll),[new(sourcePlain.Length,0,AinPatch.Hash([]),Convert.ToBase64String(addition))]);
+    var profile=f.Profile with { TargetPlainSha256=AinPatch.Hash(target), TargetPlainLength=target.Length };
+    var recipe=new PatchRecipe(1,profile.SourceSha256,AinPatch.Hash(sourcePlain),profile.TargetPlainSha256,sourcePlain.Length,target.Length,
+        profile.ExeSha256,AinPatch.Hash(f.Dll),[new(sourcePlain.Length,0,AinPatch.Hash([]),Convert.ToBase64String(addition))]);
     File.WriteAllBytes(f.PatchPath,JsonSerializer.SerializeToUtf8Bytes(recipe,AinPatch.Json));
-    var newer=new BridgeInstaller(f.Package,profile);
+    var newer=new BridgeInstaller(f.Package,[profile]);
     var status=await newer.InspectAsync(f.Game);
     Check(status.State==BridgeInstallState.RecoveryRequired && status.CanRestore && !status.IsInstalled && !status.CanInstall,"AIN-only upgrade reported current");
     Check(!(await newer.InstallAsync(f.Game)).IsInstalled,"direct install mislabeled old AIN as current");
@@ -74,7 +75,7 @@ await Test("AIN-only upgrade with unchanged DLL is detected and restores before 
     await newer.RestoreAsync(f.Game); f.AssertOriginal();
     File.WriteAllBytes(f.PatchPath,JsonSerializer.SerializeToUtf8Bytes(recipe,AinPatch.Json));
     Check((await newer.InstallAsync(f.Game)).IsInstalled && (await newer.InspectAsync(f.Game)).IsInstalled,"new script not recognized after reinstall");
-    Check(AinPatch.Hash(AinPatch.Decode(File.ReadAllBytes(f.File("Rance10.ain"))))==profile.TargetPlainHash,"wrong installed script");
+    Check(AinPatch.Hash(AinPatch.Decode(File.ReadAllBytes(f.File("Rance10.ain"))))==profile.TargetPlainSha256,"wrong installed script");
     await newer.RestoreAsync(f.Game); f.AssertOriginal();
 });
 await Test("unknown DLL is never replaced",async()=>
@@ -227,21 +228,59 @@ await Test("source reparse point is rejected when platform permits fixture",asyn
 });
 
 string? Arg(string name) { int index=Array.IndexOf(args,name); return index>=0 && index+1<args.Length ? args[index+1] : null; }
-if (Arg("--source-ain") is { } sourceAin)
+var sourceAins=args.Select((arg,index)=>(arg,index)).Where(item=>item.arg=="--source-ain")
+    .Select(item=>Path.GetFullPath(args[item.index+1])).ToArray();
+foreach (string sourceAin in sourceAins)
 {
-    await Test("real supported files: portable install plain identity and byte-exact restore",async()=>
+    await Test($"portable install and byte-exact restore: {Path.GetFileName(Path.GetDirectoryName(sourceAin))}",async()=>
     {
         string patchPath=Arg("--patch") ?? throw new ArgumentException("--patch required"),dllPath=Arg("--dll") ?? throw new ArgumentException("--dll required");
         using var f=new Fixture(false);
-        string sourceDir=Path.GetDirectoryName(Path.GetFullPath(sourceAin))!;
-        var expected=new Dictionary<string,byte[]>();
-        foreach (string name in new[]{"Rance10.exe","Rance10.ain","AliceStart.ini"}) { expected[name]=File.ReadAllBytes(Path.Combine(sourceDir,name)); File.WriteAllBytes(f.File(name),expected[name]); }
+        string sourceDir=Path.GetDirectoryName(sourceAin)!;
+        string primaryDir=Path.GetDirectoryName(sourceAins[0])!;
+        string engineDir=File.Exists(Path.Combine(sourceDir,"Rance10.exe")) ? sourceDir : primaryDir;
+        var sourceFiles=new Dictionary<string,string>
+        {
+            ["Rance10.exe"]=Path.Combine(engineDir,"Rance10.exe"),
+            ["Rance10.ain"]=sourceAin,
+            ["AliceStart.ini"]=Path.Combine(engineDir,"AliceStart.ini")
+        };
+        var expected=sourceFiles.ToDictionary(item=>item.Key,item=>File.ReadAllBytes(item.Value));
+        string exeHash=AinPatch.Hash(expected["Rance10.exe"]), sourceHash=AinPatch.Hash(expected["Rance10.ain"]);
+        var version=GameVersions.All.Single(v=>v.ExeSha256==exeHash && v.SourceSha256==sourceHash);
+        foreach (var (name,bytes) in expected) File.WriteAllBytes(f.File(name),bytes);
         File.Copy(patchPath,f.PatchPath,true); File.Copy(dllPath,Path.Combine(f.Package,"bridge","R10Bridge.dll"),true);
-        var installer=new BridgeInstaller(f.Package); await installer.InstallAsync(f.Game);
-        Check(AinPatch.Hash(AinPatch.Decode(File.ReadAllBytes(f.File("Rance10.ain"))))==InstallProfile.Supported.TargetPlainHash,"real plain hash");
+        var installer=new BridgeInstaller(f.Package);
+        if (version.Id=="japanese-original")
+        {
+            string chineseExe=Path.Combine(primaryDir,"Rance10.exe");
+            if (AinPatch.Hash(File.ReadAllBytes(chineseExe))==GameVersions.BugFix.ExeSha256)
+            {
+                File.Copy(chineseExe,f.File("Rance10.exe"),true);
+                Check((await installer.InspectAsync(f.Game)).State==BridgeInstallState.Unsupported,"crossed EXE/AIN pair recognized");
+                await Reject(()=>installer.InstallAsync(f.Game));
+                Check(!Directory.Exists(f.Journal) && !File.Exists(f.File("R10Bridge.dll")),"crossed pair modified");
+                Check(File.ReadAllBytes(f.File("Rance10.ain")).SequenceEqual(expected["Rance10.ain"]),"crossed pair AIN changed");
+                File.WriteAllBytes(f.File("Rance10.exe"),expected["Rance10.exe"]);
+            }
+        }
+        Check(GameConnection.IsSupportedGameVersion(exeHash,GameConnection.ReadAinFingerprint(f.File("Rance10.ain"))),"runtime source identity");
+        var initial=await installer.InspectAsync(f.Game);
+        Check(initial.CanInstall && initial.Message.Contains(version.Name),"correct source version detected");
+        Check((await installer.InstallAsync(f.Game)).IsInstalled,"component installed");
+        var installed=await installer.InspectAsync(f.Game);
+        Check(installed.IsInstalled && installed.CanRestore && !installed.CanInstall,"component recognized");
+        string fingerprint=GameConnection.ReadAinFingerprint(f.File("Rance10.ain"));
+        Check(fingerprint=="bridge-v1:"+version.TargetPlainSha256 && GameConnection.IsSupportedGameVersion(exeHash,fingerprint),"runtime installed identity");
+        foreach (var otherEngine in GameVersions.All.Where(v=>v.ExeSha256!=exeHash).Select(v=>v.ExeSha256).Distinct())
+            Check(!GameConnection.IsSupportedGameVersion(otherEngine,sourceHash) && !GameConnection.IsSupportedGameVersion(otherEngine,fingerprint),"runtime accepted crossed EXE/AIN pair");
+        string originalIni=Encoding.Latin1.GetString(expected["AliceStart.ini"]);
+        string installedIni=Encoding.Latin1.GetString(File.ReadAllBytes(f.File("AliceStart.ini")));
+        Check(installedIni.Replace("    \"R10Bridge.dll\",\r\n","").Replace("    \"R10Bridge.dll\",\n","")==originalIni,"only INI declaration changes");
         await installer.RestoreAsync(f.Game);
-        foreach (var (name,bytes) in expected) { Check(bytes.SequenceEqual(File.ReadAllBytes(f.File(name))),"roundtrip "+name); Check(bytes.SequenceEqual(File.ReadAllBytes(Path.Combine(sourceDir,name))),"source changed "+name); }
+        foreach (var (name,bytes) in expected) { Check(bytes.SequenceEqual(File.ReadAllBytes(f.File(name))),"roundtrip "+name); Check(bytes.SequenceEqual(File.ReadAllBytes(sourceFiles[name])),"source changed "+name); }
         Check(!File.Exists(f.File("R10Bridge.dll")),"DLL remains");
+        Check((await installer.InspectAsync(f.Game)).CanInstall,"restored source recognized");
     });
 }
 Console.WriteLine($"RESULT: {passed} passed, {failed} failed, {skipped} skipped; fixtures and temporary file copies only, no game launched.");
@@ -258,20 +297,20 @@ sealed class Fixture : IDisposable
     internal byte[] Dll { get; }=Encoding.ASCII.GetBytes("fixture bridge library");
     internal byte[] Ini { get; }=Encoding.Latin1.GetBytes("; \u00d6\u00d0\u00ce\u00c4\r\nGameName = \"Fixture\"\r\nCodeName = \"Rance10.ain\"\r\nSaveFolder = \"SaveData\"\r\nLoadDLL = {\r\n    \"PCInfo.dll\",\r\n}\r\n");
     internal byte[] Ain { get; }
-    internal InstallProfile Profile { get; }
+    internal GameVersion Profile { get; }
     internal Fixture(bool populate=true)
     {
         Directory.CreateDirectory(Game); Directory.CreateDirectory(Path.Combine(Package,"bridge"));
         byte[] plain=Encoding.ASCII.GetBytes("VERS fixture-game-script-contents"),replacement=Encoding.ASCII.GetBytes("authored-hook");
         byte[] target=plain.Concat(replacement).ToArray(); Ain=AinPatch.Encode(plain);
-        Profile=new(AinPatch.Hash(Exe),AinPatch.Hash(Ain),AinPatch.Hash(target));
+        Profile=new("fixture","测试版本",AinPatch.Hash(Exe),AinPatch.Hash(Ain),AinPatch.Hash(plain),AinPatch.Hash(target),target.Length);
         if (!populate) return;
         System.IO.File.WriteAllBytes(File("Rance10.exe"),Exe); System.IO.File.WriteAllBytes(File("Rance10.ain"),Ain); System.IO.File.WriteAllBytes(File("AliceStart.ini"),Ini);
         System.IO.File.WriteAllBytes(Path.Combine(Package,"bridge","R10Bridge.dll"),Dll);
-        var recipe=new PatchRecipe(1,Profile.SourceHash,AinPatch.Hash(plain),Profile.TargetPlainHash,plain.Length,target.Length,Profile.ExeHash,AinPatch.Hash(Dll),[new(plain.Length,0,AinPatch.Hash([]),Convert.ToBase64String(replacement))]);
+        var recipe=new PatchRecipe(1,Profile.SourceSha256,AinPatch.Hash(plain),Profile.TargetPlainSha256,plain.Length,target.Length,Profile.ExeSha256,AinPatch.Hash(Dll),[new(plain.Length,0,AinPatch.Hash([]),Convert.ToBase64String(replacement))]);
         System.IO.File.WriteAllBytes(PatchPath,JsonSerializer.SerializeToUtf8Bytes(recipe,AinPatch.Json));
     }
-    internal BridgeInstaller Installer(Action<string>? failure=null)=>new(Package,Profile,failure);
+    internal BridgeInstaller Installer(Action<string>? failure=null)=>new(Package,[Profile],failure);
     internal string File(string name)=>Path.Combine(Game,name);
     internal void AssertOriginal()
     {

@@ -258,6 +258,12 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             Help:FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help,ActiveDescription:"游戏线程已应用开关；固定奖励和消耗型奖励保留原规则。");
         foreach (var id in new[] { FeatureId.Redraw, FeatureId.Redistribute })
         {
+            if (state.PatchManagesRerolls)
+            {
+                const string help = "当前游戏补丁负责此流程，修改器保留补丁原有规则。";
+                features[id] = new(Detail: help, Help: help) { StatusText = "由游戏补丁控制" };
+                continue;
+            }
             bool available=CanWrite(state,id), enabled=id==FeatureId.Redraw ? state.FoodRedraw : state.AutoRedistribute;
             features[id]=new(Requested:enabled,Active:enabled && available,CanEdit:available,
                 Detail:available ? "游戏线程控制脚本分支，无需扫描或改写运行中的指令。" : "请安装新版游戏组件并重新启动游戏。",

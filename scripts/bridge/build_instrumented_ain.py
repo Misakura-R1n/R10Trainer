@@ -1,6 +1,6 @@
 """Build an offline R10 bridge AIN inside artifacts; never modify the source/game.
 
-The format reader is restricted to the SHA-pinned AIN v12 profile. Format facts
+The format reader is restricted to SHA-pinned AIN v12 builds. Format facts
 were checked against libsys4's AIN reader and the bundled alice 0.13 CLI:
 https://github.com/nunuhara/libsys4/blob/master/src/ain.c
 https://github.com/nunuhara/alice-tools/blob/master/README-ain.md
@@ -15,21 +15,12 @@ import struct
 import subprocess
 import sys
 import zlib
+from ain_profiles import LAYOUTS, ROOT, SECTION_BOUNDS, VERSIONS, VERSION_BY_SOURCE
 
-ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = ROOT / "artifacts"
-SOURCE_SHA = "7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A"
+SOURCE_SHA = VERSIONS[0]["sourceSha256"]
 DEFAULT_ALICE = Path(r"D:\code\deepseek\rc\文本文件\aindiff\vendor\alice\alice.exe")
 CODE_SIZE = 0xDE5CEA
-SECTION_BOUNDS = [
-    ("VERS", 0, 8), ("CODE", 8, 0xDE5CFA),
-    ("FUNC", 0xDE5CFA, 0x1395C28), ("GLOB", 0x1395C28, 0x139B996),
-    ("STRT", 0x139B996, 0x13E5A65), ("MSG1", 0x13E5A65, 0x1AE6582),
-    ("MAIN", 0x1AE6582, 0x1AE658A), ("HLL0", 0x1AE658A, 0x1AFA1BD),
-    ("SWI0", 0x1AFA1BD, 0x1B02B15), ("GVER", 0x1B02B15, 0x1B02B1D),
-    ("STR0", 0x1B02B1D, 0x1B419BD), ("DELG", 0x1B419BD, 0x1B62B4B),
-    ("OBJG", 0x1B62B4B, 0x1B62BCA), ("ENUM", 0x1B62BCA, 0x1B6369F),
-]
 HOOKS = [
     {"id": 0x47DD, "name": "main", "entry": 0x2E68EC, "marker": 0, "arguments": 0},
     {"id": 0x2064, "name": "parts::detail::Update", "entry": 0x1F1B0E, "marker": 1, "arguments": 2},
@@ -245,29 +236,40 @@ def verify_prelude(rows: list[dict], hook: dict, library: int) -> None:
 
 def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     require(profile in {"heartbeat", "full", "controls"}, "Unknown bridge profile")
-    require(sha(raw) == SOURCE_SHA, "Unsupported source AIN SHA-256; an already instrumented AIN is not an input")
+    source_hash = sha(raw)
+    version = VERSION_BY_SOURCE.get(source_hash)
+    require(version is not None, "Unsupported source AIN SHA-256; an already instrumented AIN is not an input")
+    layout = LAYOUTS[version["id"]]
+    at = layout.relocate
+    encoding = f"CP{layout.code_page}"
     require(raw[:8] == b"AI2\0\0\0\0\0", "Unsupported AIN container")
     unpacked_size, compressed_size = struct.unpack_from("<II", raw, 8)
     require(compressed_size == len(raw) - 16, "Compressed length mismatch")
     plain = zlib.decompress(raw[16:])
-    require(len(plain) == unpacked_size == SECTION_BOUNDS[-1][2], "Decompressed length mismatch")
+    require(len(plain) == unpacked_size == layout.sections[-1][2], "Decompressed length mismatch")
+    require(sha(plain) == version["sourcePlainSha256"], "Source AIN payload mismatch")
     sections = {}
-    for name, start, end in SECTION_BOUNDS:
+    for name, start, end in layout.sections:
         sections[name] = plain[start:end]
         require(sections[name][:4] == name.encode("ascii"), "Source section boundary mismatch: " + name)
     require(sections["VERS"] == b"VERS" + i32(12), "Only AIN 12 is supported")
     code = sections["CODE"][8:]
-    require(len(code) == CODE_SIZE and code[-6:] == instruction("FUNC", 0), "Missing terminal NULL function")
+    require(sections["CODE"][4:8] == i32(len(code)) and code[-6:] == instruction("FUNC", 0), "Invalid CODE length or terminal function")
     functions = read_functions(sections["FUNC"])
     libraries = read_libraries(sections["HLL0"])
     require(len(functions) == 37698 and len(libraries) == 36, "Unexpected metadata profile")
     require(all(item["name"] != b"R10Bridge" for item in libraries), "Bridge library already exists")
-    require([f["id"] for f in functions if f["address"] >= CODE_SIZE] == [0], "Unexpected CODE end sentinel")
+    require([f["id"] for f in functions if f["address"] >= len(code)] == [0], "Unexpected CODE end sentinel")
     func = bytearray(sections["FUNC"])
     extended = bytearray(code[:-6])  # move terminal FUNC 0 after the appended prefixes
     report_hooks, listing, added_functions, code_edits = [], [], [], []
     hooks = [dict(hook) for hook in HOOKS]
     capabilities = 2047 if profile == "controls" else 2031 if profile == "full" else 1
+    if profile in {"full", "controls"}:
+        if layout.code_page == 932:
+            capabilities |= 2048
+        if layout.patch_managed_rerolls:
+            capabilities = (capabilities & ~(64 | 128)) | 4096
     hooks[0]["tickArguments"] = [("const", 1), ("const", capabilities)]
     redirected = set()
 
@@ -320,14 +322,15 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
             asm.emit("CALLHLL", 36, 1, -1); asm.emit("CALLMETHOD", 1)
             asm.emit("CALLFUNC", sample_id); asm.emit("RETURN")
         damage_id = add_function("BattlePlayer@R10BridgeApplyDamage", 0, ["value"], damage)
-        for pc in DAMAGE_SITES:
+        for pc in map(at, DAMAGE_SITES):
             replace_code(pc + 2, i32(0x6812), i32(damage_id), "damage-only Hp setter target")
             require(code[pc:pc + 6] == instruction("PUSH", 0x6812), "Damage site is not a PUSH instruction")
-        for pc in EXCLUDED_HP_SITES:
+        for pc in map(at, EXCLUDED_HP_SITES):
             require(extended[pc:pc + 6] == instruction("PUSH", 0x6812), "Healing/initialization/result site changed")
 
         for original_id, name, pc in ((0x580D, "GameChapter1@R10BridgeRestoreInit", 0x3402E0),
                                       (0x581C, "GameChapter2@R10BridgeRestoreInit", 0x340376)):
+            pc = at(pc)
             def restore(asm, original_id=original_id):
                 asm.this_get(original_id); asm.tick(3, 1, 0); asm.emit("RETURN")
             wrapper = add_function(name, 0, [], restore)
@@ -339,23 +342,24 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
             asm.tick(4, 1, 0); asm.emit("PUSH", 0); asm.emit("RETURN")
             asm.label("success"); asm.emit("PUSH", 1); asm.emit("RETURN")
         wrapper = add_function("R10Bridge_LoadLocalAttempt", 47, ["index"], load_local)
-        require(code[0x408F3A:0x408F40] == instruction("CALLFUNC", 0x7026), "Local load caller mismatch")
-        replace_code(0x408F3C, i32(0x7026), i32(wrapper), "ordinary load failure only")
+        pc = at(0x408F3A)
+        require(code[pc:pc + 6] == instruction("CALLFUNC", 0x7026), "Local load caller mismatch")
+        replace_code(pc + 2, i32(0x7026), i32(wrapper), "ordinary load failure only")
 
         def resume_cleanup(asm):
             asm.emit("CALLFUNC", 0x15D8); asm.tick(3, 2, 0); asm.emit("RETURN")
         wrapper = add_function("R10Bridge_ResumeCleanup", 0, [], resume_cleanup)
-        require(code[0x1723A2:0x1723A8] == instruction("CALLFUNC", 0x15D8), "Resume cleanup caller mismatch")
-        replace_code(0x1723A4, i32(0x15D8), i32(wrapper), "resume completion after cleanup; native pending-kind gate required")
+        pc = at(0x1723A2)
+        require(code[pc:pc + 6] == instruction("CALLFUNC", 0x15D8), "Resume cleanup caller mismatch")
+        replace_code(pc + 2, i32(0x15D8), i32(wrapper), "resume completion after cleanup; native pending-kind gate required")
 
         def resume_failure(asm):
             asm.tick(4, 2, 0)
             # The original S_PUSH is replayed without decoding/transcoding its string.
-            asm.rows.append({"pc": asm.start + len(asm.code), "op": "S_PUSH", "args": (0x65C,)})
-            asm.code.extend(code[0x172C52:0x172C58]); asm.emit("JUMP", 0x172C58)
+            asm.emit("S_PUSH", 0x65C); asm.emit("JUMP", at(0x172C58))
         wrapper = add_function("R10Bridge_ResumeFailureContinuation", 0, [], resume_failure)
-        expected = struct.pack("<Hi", 0x41, 0x65C)
-        replace_code(0x172C52, expected, instruction("JUMP", added_functions[-1]["entry"]), "ResumeLoad returned: preserve original Error continuation")
+        expected = instruction("S_PUSH", 0x65C)
+        replace_code(at(0x172C52), expected, instruction("JUMP", add_function.entries[wrapper]), "ResumeLoad returned: preserve original Error continuation")
 
         hooks.extend([
             {"id": 0x6708, "name": "ResetLoadManager::Run", "entry": 0x408E72, "arguments": 1, "marker": 2,
@@ -366,16 +370,18 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
 
     if profile in {"full", "controls"}:
         from cards_ain import install_cards
-        install_cards(add_function, replace_code, code, instruction)
-        from feature_ain import install_features
-        install_features(add_function, replace_code, instruction)
+        install_cards(add_function, replace_code, instruction, at)
+        if not layout.patch_managed_rerolls:
+            from feature_ain import install_features
+            install_features(add_function, replace_code, instruction, at)
         from data_ain import install_data
         hooks[1]["data"] = install_data(add_function)
         from card_management_ain import install_card_management
-        hooks[1]["cardManagement"] = install_card_management(add_function)
+        hooks[1]["cardManagement"] = install_card_management(add_function, sections["STR0"], encoding)
 
     if profile in {"full", "controls"}:
         def redirect(function_id, name, entry, arguments, body):
+            entry = at(entry)
             original = functions[function_id]
             require(original["name"] == name.encode("ascii") and original["address"] == entry and
                     original["args"] == arguments and function_id not in redirected and
@@ -388,14 +394,15 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
             redirected.add(function_id)
             listing.append(f"; battle prefix {name} ({function_id:#x})")
             listing.extend(f"{row['pc']:08X} {row['op']} {row['args']}" for row in asm.rows)
-        install_battle(add_function, redirect, replace_code, instruction, sample_id, profile == "controls")
+        install_battle(add_function, redirect, replace_code, instruction, sample_id, profile == "controls", at)
     if profile == "controls":
         from controls_ain import install_load_control
         hooks[1]["controls"] = install_load_control(add_function)
 
     for hook in hooks:
         original = functions[hook["id"]]
-        require((hook.get("stringArgument") or original["name"].decode("ascii") == hook["name"]) and original["address"] == hook["entry"] and
+        hook["entry"] = at(hook["entry"])
+        require(original["name"] == hook["name"].encode(encoding) and original["address"] == hook["entry"] and
                 original["args"] == hook["arguments"], "Hook function metadata mismatch")
         require(code[hook["entry"] - 6:hook["entry"]] == instruction("FUNC", hook["id"]), "Hook FUNC header mismatch")
         expected_type = (12 if hook.get("stringArgument") else 10, -1, 0, None)
@@ -441,16 +448,17 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         expected = bytes.fromhex(edit["originalHex"])
         restored[edit["pc"]:edit["pc"] + len(expected)] = expected
     require(restored == code[:-6], "Original bytecode changed outside declared callsites")
-    result_plain = b"".join(updated[name] for name, _, _ in SECTION_BOUNDS)
+    result_plain = b"".join(updated[name] for name, _, _ in layout.sections)
     compressed = zlib.compress(result_plain, 9)
     result = raw[:8] + struct.pack("<II", len(result_plain), len(compressed)) + compressed
     report = {"schema": 1, "profile": profile, "scriptVersion": 1, "capabilities": capabilities, "controlRedirects": sorted(redirected),
-              "sourceSha256": SOURCE_SHA, "outputSha256": sha(result), "ainVersion": 12,
+              "sourceVersion": version["id"], "sourceSha256": source_hash, "outputSha256": sha(result),
+              "outputPlainSha256": sha(result_plain), "outputPlainLength": len(result_plain), "ainVersion": 12,
               "originalCodeLength": len(code), "newCodeLength": len(extended), "hllLibraryIndex": len(libraries),
               "hll": {"name": "R10Bridge", "export": "Tick", "return": "int32", "arguments": ["int32 marker", "int32 a", "int32 b"]},
               "hooks": report_hooks, "addedFunctions": added_functions, "codeEdits": code_edits,
               "nullSentinelEntry": len(extended), "originalBytecodePreservedOutsideDeclaredCallsites": True,
-              "changedSections": ["CODE", "FUNC", "HLL0"], "unchangedSections": [name for name,_,_ in SECTION_BOUNDS if updated[name] == sections[name]],
+              "changedSections": ["CODE", "FUNC", "HLL0"], "unchangedSections": [name for name,_,_ in layout.sections if updated[name] == sections[name]],
               "prefixStackChecksPassed": len(hooks), "liveValidated": False}
     return result, report, "\n".join(listing) + "\n"
 
@@ -475,6 +483,7 @@ def main() -> None:
     require(args.alice.is_file(), "alice executable not found")
     original = source.read_bytes()
     generated, report, listing = build(original, args.profile)
+    encoding = f"CP{LAYOUTS[report['sourceVersion']].code_page}"
     output.mkdir(parents=True, exist_ok=True)
     temporary = output / "Rance10.ain.tmp"
     temporary.write_bytes(generated); temporary.replace(target)
@@ -485,14 +494,15 @@ def main() -> None:
     checks.extend((f["name"], f"added-{f['id']:04x}.asm") for f in report["addedFunctions"])
     for option, filename in checks:
         flags = [option] if option.startswith("--") else ["--function", option]
-        command = [str(args.alice), "ain", "dump", *flags, "--input-encoding", "CP936", "--output-encoding", "UTF-8", "-o", str(output / filename), str(target)]
+        command = [str(args.alice), "ain", "dump", *flags, "--input-encoding", encoding, "--output-encoding", "UTF-8", "-o", str(output / filename), str(target)]
         subprocess.run(command, check=True, capture_output=True)
     require("R10Bridge" in (output / "output.libraries.txt").read_text(encoding="utf-8"), "alice did not recognize the new HLL library")
     require(source.read_bytes() == original, "Source file changed during the offline build")
     report.update({"sourcePath": str(source), "outputPath": str(target), "alicePath": str(args.alice.resolve()),
                    "aliceSha256": sha(args.alice.read_bytes()), "aliceOfflineParsePassed": True, "sourceUnchanged": True})
     (output / "bridge-build.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"output": str(target), "sha256": report["outputSha256"], "codeBytesAdded": report["newCodeLength"] - CODE_SIZE,
+    print(json.dumps({"output": str(target), "sourceVersion": report["sourceVersion"], "sha256": report["outputSha256"],
+                      "codeBytesAdded": report["newCodeLength"] - report["originalCodeLength"],
                       "hllIndex": report["hllLibraryIndex"], "sourceUnchanged": True, "aliceOfflineParsePassed": True}, ensure_ascii=False, indent=2))
 
 

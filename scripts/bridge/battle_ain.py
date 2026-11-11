@@ -45,7 +45,7 @@ def max_ap(asm):
     asm.global_get(PLAYER_PARAMETERS, 0x66A6)
 
 
-def install_battle(add_function, redirect, replace_code, instruction, sample_hp, controls):
+def install_battle(add_function, redirect, replace_code, instruction, sample_hp, controls, relocate):
     def refill(asm):
         flag(asm, AP_FULL); asm.emit("IFZ", "done")
         current_ap(asm); max_ap(asm); asm.emit("LT"); asm.emit("IFZ", "done")
@@ -174,6 +174,7 @@ def install_battle(add_function, redirect, replace_code, instruction, sample_hp,
     redirect(0x6A44, "LeaderState@IsSettable", 0x42BAB6, 1, leader_guard)
 
     def allow_used(name, pc, blocked, bit):
+        pc, blocked = relocate(pc), relocate(blocked)
         def body(asm):
             asm.emit("IFZ", "allowed")
             flag(asm, bit); asm.emit("IFNZ", "allowed")

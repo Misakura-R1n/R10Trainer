@@ -6,6 +6,7 @@ param(
     [switch]$Bridge,
     [switch]$Controls,
     [string]$SourceAin,
+    [string[]]$CompatibilityAin,
     [string]$PythonPath = 'python',
     [string]$AlicePath,
     [string]$BridgeToolchain = 'D:\software\mingw64\bin'
@@ -17,6 +18,8 @@ try {
     if (($Bridge -or $Controls) -and (-not $SourceAin -or -not (Test-Path -LiteralPath $SourceAin -PathType Leaf))) {
         throw '-Bridge/-Controls requires -SourceAin pointing to the original supported Rance10.ain.'
     }
+    if ($CompatibilityAin -and -not $Bridge) { throw '-CompatibilityAin requires -Bridge.' }
+    $versions = Get-Content -LiteralPath src/R10.Core/Memory/GameVersions.json -Raw | ConvertFrom-Json
     & $DotNetPath build R10Trainer.slnx -c $Configuration --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
     & $DotNetPath run --project tests/R10.Tests -c $Configuration --no-build
@@ -41,15 +44,28 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Component feature branch verification failed.' }
         & $PythonPath -B scripts/bridge/test_prepare_sandbox.py
         if ($LASTEXITCODE -ne 0) { throw 'Sandbox preparation verification failed.' }
-        $ainArguments = @('-B', 'scripts/bridge/build_instrumented_ain.py', '--source', $SourceAin, '--profile', 'full', '--output-dir', 'artifacts/bridge/full')
-        if ($AlicePath) { $ainArguments += @('--alice', $AlicePath) }
-        & $PythonPath @ainArguments
-        if ($LASTEXITCODE -ne 0) { throw 'AIN bridge construction failed.' }
-        & $PythonPath -B scripts/bridge/export_portable_patch.py --source $SourceAin --dll artifacts/bridge-native/R10Bridge.dll --output-dir artifacts/bridge/portable
+        $sourceAins = @($SourceAin) + @($CompatibilityAin | Where-Object { $_ })
+        $sourceArguments = @()
+        $roundtripArguments = @()
+        $seen = @{}
+        foreach ($source in $sourceAins) {
+            $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+            $gameVersion = $versions | Where-Object sourceSha256 -EQ $sourceHash
+            if (-not $gameVersion -or $seen.ContainsKey($sourceHash)) { throw "Unsupported or duplicate AIN: $source" }
+            $seen[$sourceHash] = $true
+            $output = if ($gameVersion.id -eq 'bugfix') { 'artifacts/bridge/full' } else { "artifacts/bridge/full-compatibility/$($gameVersion.id)" }
+            $ainArguments = @('-B', 'scripts/bridge/build_instrumented_ain.py', '--source', $source, '--profile', 'full', '--output-dir', $output)
+            if ($AlicePath) { $ainArguments += @('--alice', $AlicePath) }
+            & $PythonPath @ainArguments
+            if ($LASTEXITCODE -ne 0) { throw "AIN bridge construction failed for $($gameVersion.id)." }
+            $sourceArguments += @('--source', $source)
+            $roundtripArguments += @('--source-ain', $source)
+        }
+        & $PythonPath -B scripts/bridge/export_portable_patch.py @sourceArguments --dll artifacts/bridge-native/R10Bridge.dll --output-dir artifacts/bridge/portable
         if ($LASTEXITCODE -ne 0) { throw 'Portable HP patch export failed.' }
         & $DotNetPath run --project tests/R10.Tests -c $Configuration --no-build -- --bridge-ain artifacts/bridge/full/Rance10.ain
         if ($LASTEXITCODE -ne 0) { throw 'Instrumented AIN compatibility verification failed.' }
-        & $DotNetPath run --project tests/R10.Install.Tests -c $Configuration --no-build -- --source-ain $SourceAin --patch artifacts/bridge/portable/hp-patch.json --dll artifacts/bridge-native/R10Bridge.dll
+        & $DotNetPath run --project tests/R10.Install.Tests -c $Configuration --no-build -- @roundtripArguments --patch artifacts/bridge/portable/hp-patch.json --dll artifacts/bridge-native/R10Bridge.dll
         if ($LASTEXITCODE -ne 0) { throw 'Portable HP real-file roundtrip verification failed.' }
     }
     if ($Controls) {
@@ -77,7 +93,21 @@ try {
         }
         $portableIdentity = Get-Content -LiteralPath artifacts/bridge/portable/hp-patch.json -Raw | ConvertFrom-Json
         $bridgeDllHash = (Get-FileHash -LiteralPath artifacts/bridge-native/R10Bridge.dll -Algorithm SHA256).Hash
-        if ($portableIdentity.dllSha256 -ne $bridgeDllHash) { throw 'HP patch and native DLL identities differ; rebuild with -Bridge.' }
+        $recipes = if ($portableIdentity.schema -eq 2) { $portableIdentity.profiles } else { $portableIdentity }
+        $profileIdentities = @(
+            foreach ($recipe in $recipes) {
+                $matched = $versions | Where-Object sourceSha256 -EQ $recipe.sourceSha256
+                if (-not $matched -or $recipe.schema -ne 1 -or $recipe.dllSha256 -ne $bridgeDllHash -or
+                    $recipe.exeSha256 -ne $matched.exeSha256 -or $recipe.sourcePlainSha256 -ne $matched.sourcePlainSha256 -or
+                    $recipe.targetPlainSha256 -ne $matched.targetPlainSha256 -or $recipe.targetPlainLength -ne $matched.targetPlainLength) {
+                    throw 'Component recipe, game identity or DLL mismatch. Rebuild with -Bridge.'
+                }
+                [ordered]@{ id=$matched.id; exeSha256=$matched.exeSha256; originalAinSha256=$matched.sourceSha256; ainPlainSha256=$matched.targetPlainSha256 }
+            }
+        )
+        if ($profileIdentities.Count -eq 0 -or @($profileIdentities.id | Sort-Object -Unique).Count -ne $profileIdentities.Count) {
+            throw 'Component recipe list is empty or has duplicate entries.'
+        }
         $appProject = [xml](Get-Content -LiteralPath src/R10.App/R10.App.csproj -Raw)
         $version = [string]$appProject.Project.PropertyGroup.Version
         if ($version -notmatch '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$') { throw 'Invalid package version.' }
@@ -94,7 +124,8 @@ try {
         New-Item -ItemType Directory -Path $bridgePackage -Force | Out-Null
         Copy-Item -LiteralPath artifacts/bridge-native/R10Bridge.dll -Destination "$bridgePackage/R10Bridge.dll" -Force
         Copy-Item -LiteralPath artifacts/bridge/portable/hp-patch.json -Destination "$bridgePackage/hp-patch.json" -Force
-        $bridgeIdentity = [ordered]@{ dllSha256=$bridgeDllHash; patchSha256=(Get-FileHash -LiteralPath "$bridgePackage/hp-patch.json" -Algorithm SHA256).Hash; ainPlainSha256=$portableIdentity.targetPlainSha256; originalAinSha256=$portableIdentity.sourceSha256 }
+        $primaryIdentity = $profileIdentities | Where-Object { $_.id -eq 'bugfix' }
+        $bridgeIdentity = [ordered]@{ dllSha256=$bridgeDllHash; patchSha256=(Get-FileHash -LiteralPath "$bridgePackage/hp-patch.json" -Algorithm SHA256).Hash; ainPlainSha256=$primaryIdentity.ainPlainSha256; originalAinSha256=$primaryIdentity.originalAinSha256; profiles=$profileIdentities }
         $assets = Get-Content -LiteralPath src/R10.App/obj/project.assets.json -Raw | ConvertFrom-Json
         $runtimeConfig = Get-Content -LiteralPath "$publishDirectory/R10Trainer.runtimeconfig.json" -Raw | ConvertFrom-Json
         New-Item -ItemType Directory -Path "$publishDirectory/licenses" -Force | Out-Null
@@ -118,8 +149,8 @@ try {
             $full = Join-Path $repoRoot $relative
             if (Test-Path -LiteralPath $full -PathType Leaf) { $sourceHashes[$relative] = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash }
         }
-        $metadata = [ordered]@{ version=$version; builtAtUtc=[DateTime]::UtcNow.ToString('o'); commit=$head; dirty=[bool](& git status --porcelain); rid='win-x86'; bridgeIncluded=$true; bridge=$bridgeIdentity; mcpIncluded=$false; gameProfile='Chinese BugFix'; validation='automated + independent x86 helper; this script does not run real-game tests; see README for separately recorded live checks'; sources=$sourceHashes }
-        $metadata | ConvertTo-Json | Set-Content -LiteralPath "$publishDirectory/build-info.json" -Encoding utf8
+        $metadata = [ordered]@{ version=$version; builtAtUtc=[DateTime]::UtcNow.ToString('o'); commit=$head; dirty=[bool](& git status --porcelain); rid='win-x86'; bridgeIncluded=$true; bridge=$bridgeIdentity; mcpIncluded=$false; validation='automated + independent x86 helper; this script does not run real-game tests; see README for separately recorded live checks'; sources=$sourceHashes }
+        $metadata | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$publishDirectory/build-info.json" -Encoding utf8
         Copy-Item -LiteralPath README.md -Destination "$publishDirectory/README.md" -Force
         $gameFiles = @(Get-ChildItem -LiteralPath $publishDirectory -Recurse -File | Where-Object { $_.Extension -in @('.ain', '.afa', '.asd', '.vsf', '.qnt') -or $_.Name -in @('Rance10.exe', 'AliceStart.ini', 'R10.Mcp.exe', 'R10.Mcp.dll', 'settings.json') })
         if ($gameFiles.Count -ne 0) { throw 'Publish directory contains game data or saves; refusing to create a package.' }

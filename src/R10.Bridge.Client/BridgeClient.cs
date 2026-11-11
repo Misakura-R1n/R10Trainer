@@ -7,6 +7,8 @@ public sealed class BridgeClient : IBridgeClient
 {
     private static readonly Encoding CardEncoding = CodePagesEncodingProvider.Instance.GetEncoding(936,
         EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)!;
+    private static readonly Encoding JapaneseCardEncoding = CodePagesEncodingProvider.Instance.GetEncoding(932,
+        EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)!;
     private readonly IBridgeTransport _transport;
     public int ProcessId { get; }
     public bool IsSimulation => _transport.IsSimulation;
@@ -172,6 +174,12 @@ public sealed class BridgeClient : IBridgeClient
 
     private static CardReply ParseCards(JsonElement response, JsonElement rows)
     {
+        var encoding = response.TryGetProperty("cardCodePage", out _) ? Integer(response, "cardCodePage") switch
+        {
+            936 => CardEncoding,
+            932 => JapaneseCardEncoding,
+            _ => throw Invalid("cardCodePage")
+        } : CardEncoding;
         int total = BoundedInteger(response, "cardTotal", CardRequest.RowLimit);
         if (rows.ValueKind != JsonValueKind.Array || rows.GetArrayLength() is < 1 or > CardRequest.PageSize || total == 0)
             throw Invalid("cardRows");
@@ -182,7 +190,7 @@ public sealed class BridgeClient : IBridgeClient
             int index = BoundedInteger(row, "index", total - 1);
             if (entries.Count != 0 && index != entries[^1].Index + 1) throw Invalid("index");
             string idHex = Text(row, "idHex"), characterHex = Text(row, "characterHex");
-            string id = DecodeCardText(idHex), character = DecodeCardText(characterHex);
+            string id = DecodeCardText(idHex, encoding), character = DecodeCardText(characterHex, encoding);
             if (id.Length == 0) throw Invalid("idHex");
             entries.Add(new(index, id, character, BoundedInteger(row, "flags", 7), idHex + "." + characterHex));
         }
@@ -194,10 +202,10 @@ public sealed class BridgeClient : IBridgeClient
             BoundedInteger(response, "nextExp", int.MaxValue), maxStar);
     }
 
-    private static string DecodeCardText(string hex)
+    private static string DecodeCardText(string hex, Encoding encoding)
     {
         if (hex.Length > 128) throw Invalid("card text");
-        try { return CardEncoding.GetString(Convert.FromHexString(hex)); }
+        try { return encoding.GetString(Convert.FromHexString(hex)); }
         catch (Exception error) when (error is FormatException or DecoderFallbackException) { throw Invalid("card text"); }
     }
 

@@ -152,8 +152,8 @@ internal static class Program
     private static void TestCardManagement(Call edit)
     {
         const int generation = 6;
-        string Submit(int action, int context, string key = "", int star = 0) =>
-            JsonSerializer.Serialize(new { op = "card", action, argument = 0, argument2 = star, generation, context, key });
+        string Submit(int action, int context, string key = "", int star = 0, int loadGeneration = generation) =>
+            JsonSerializer.Serialize(new { op = "card", action, argument = 0, argument2 = star, generation = loadGeneration, context, key });
         JsonElement Result(int id) => Request(JsonSerializer.Serialize(new { op = "get_command_result", id }));
         int Context() => Request("{\"op\":\"get_state\"}").GetProperty("cardContext").GetInt32();
         tick(3,1,0); tick(1,16,16);
@@ -192,6 +192,17 @@ internal static class Program
         tick(2,1,0); tick(1,16,16);
         Check(Context()==0 && edit(1,0,0)==0 && Result(oldSave).GetProperty("state").GetString()=="rejected",
             "loading cancels card commands and clears card readiness");
+
+        tick(3,1,0); tick(0,1,1007|2048); tick(1,16,16); edit(0,1,0);
+        int japanese = Request(Submit(10,Context(),loadGeneration:generation+1)).GetProperty("id").GetInt32();
+        Check(edit(1,0,0)==10, "Japanese card request claimed");
+        edit(4,0,6);
+        foreach (int character in new[] { 0x8389, 0x8393, 0x8358 }) { edit(5,character,0); edit(6,character,0); }
+        edit(11,1,1);
+        var japaneseResult = Result(japanese);
+        Check(japaneseResult.GetProperty("cardCodePage").GetInt32()==932 &&
+            japaneseResult.GetProperty("cardRows")[0].GetProperty("idHex").GetString()=="838983938358",
+            "Japanese component reports CP932 and preserves card bytes");
     }
 
     private static void TestBattleFeatures(Call battle)

@@ -4,13 +4,14 @@ The native side borrows an array handle only; it never dereferences VM memory.
 The script owns the array throughout CreateCard, including all fixed reward IDs.
 """
 
-def install_cards(add_function, replace_code, code, instruction):
+def install_cards(add_function, replace_code, instruction, relocate):
     def native(a, op, value=0):
         a.emit("PUSH", op)
         value(a) if callable(value) else a.emit("PUSH", value)
         a.emit("PUSH", 0); a.emit("CALLHLL", 36, 3, -1)
 
     def splice(name, pc, expected, body):
+        pc = relocate(pc)
         def continuation(a):
             body(a)
             a.code.extend(expected)
@@ -34,10 +35,10 @@ def install_cards(add_function, replace_code, code, instruction):
         a.local(6); a.emit("PUSH", 0x6DB6); a.emit("CALLMETHOD", 0)
         a.emit("S_ASSIGN"); a.emit("DELETE")
         a.label("done")
-    splice("R10Bridge_CardBatchRemember", 0x3AD0B2, code[0x3AD0B2:0x3AD0BA], remember)
+    splice("R10Bridge_CardBatchRemember", 0x3AD0B2, instruction("PUSHLOCALPAGE") + instruction("PUSH", 1), remember)
     def end(a):
         native(a, 2); a.emit("POP")
-    splice("R10Bridge_CardBatchEnd", 0x3AD0F2, code[0x3AD0F2:0x3AD0FA], end)
+    splice("R10Bridge_CardBatchEnd", 0x3AD0F2, instruction("PUSHLOCALPAGE") + instruction("PUSH", 5), end)
 
     def assign(a, index, value):
         a.emit("PUSHLOCALPAGE"); a.emit("PUSH", index)

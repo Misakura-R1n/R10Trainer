@@ -55,7 +55,7 @@ public partial class MainWindow : Window
             await _runtime.StartAsync();
             _viewModel.Update(_runtime.Current);
             await _gameSetup.InitializeAsync();
-            _viewModel.SetFooter(_demo ? "未连接真实游戏" : "仅适配中文 BugFix 版");
+            if (_demo) _viewModel.SetFooter("未连接真实游戏");
         }
         catch (Exception ex) { _viewModel.SetError(ex.Message); }
         ArrangeGroups();

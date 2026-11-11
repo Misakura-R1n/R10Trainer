@@ -110,6 +110,18 @@ await Test("card readback decodes CP936 and rejects malformed or noncontiguous r
         Check((await Error(() => malformed.GetCommandResultAsync(7))).Code == "invalid_response");
     }
 });
+await Test("card readback decodes Japanese text and preserves the raw identity key", async () =>
+{
+    BridgeClient Client(int codePage, string idHex) => new(42, new FixtureTransport(_ => Ok(new
+    {
+        id = 7, state = "applied", cardCodePage = codePage, cardTotal = 1,
+        cardRows = new[] { new { index = 0, flags = 7, idHex, characterHex = "838983938358" } }
+    })));
+    var row = (await Client(932, "4C76343220838983938358").GetCommandResultAsync(7)).Cards!.Rows.Single();
+    Check(row.Id == "Lv42 ランス" && row.CharacterId == "ランス" && row.Key == "4C76343220838983938358.838983938358");
+    Check((await Error(() => Client(65001, "41").GetCommandResultAsync(7))).Code == "invalid_response");
+    Check((await Error(() => Client(932, "83").GetCommandResultAsync(7))).Code == "invalid_response");
+});
 await Test("state rejects wrong PID", async () => Check((await Error(() => new BridgeClient(43, new FixtureTransport(_ => State())).GetStateAsync())).Code == "response_pid_mismatch"));
 await Test("state rejects malformed numeric fields without leaking parsing exceptions", async () =>
 {

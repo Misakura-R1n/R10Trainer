@@ -2,11 +2,17 @@
 
 PAGE, INSPECT, GRANT, SET_STAR = range(10, 14)
 PAGE_SIZE, ROW_LIMIT = 32, 4096
-TABLE, ID, CHARACTER, TYPE = 0xF3E, 0xFEE, 0xF21, 0xFD1
+CARD_STRINGS = {
+    "CP936": ("卡牌数据", "Id", "识别名", "種別", "测试角色", "测试物品"),
+    "CP932": ("カードデータ", "Id", "識別名", "種別", "テストキャラ", "テストアイテム"),
+}
 PLAYER_CARDS, CHARACTERS = 0x103, 0x101
 
 
-def install_card_management(add_function):
+def install_card_management(add_function, section, encoding):
+    strings = section[8:-1].split(b"\0")
+    table, id_field, character_field, type_field, *test_ids = (
+        strings.index(name.encode(encoding)) for name in CARD_STRINGS[encoding])
     kind, row, total, end, flags, char_index, limit, target, card_id, character_id = range(10)
     local_types = [(name, 10) for name in ("kind", "row", "total", "end", "flags", "charIndex", "limit", "target")]
     local_types += [("cardId", 12), ("characterId", 12)]
@@ -38,7 +44,7 @@ def install_card_management(add_function):
             value(local(index)); asm.emit("A_REF")
 
         def table_field(field, function):
-            asm.emit("S_PUSH", TABLE); value(local(row)); asm.emit("S_PUSH", field)
+            asm.emit("S_PUSH", table); value(local(row)); asm.emit("S_PUSH", field)
             asm.emit("S_PUSH" if function == 0x156E else "PUSH", 0)
             asm.emit("PUSH", 0); asm.emit("CALLFUNC", function)
 
@@ -91,7 +97,7 @@ def install_card_management(add_function):
         assign(kind, lambda: native(1)); value(local(kind)); asm.emit("IFZ", "return")
         assign(row, lambda: native(2))
         def height():
-            asm.emit("S_PUSH", TABLE); asm.emit("PUSH", 0); asm.emit("CALLFUNC", 0x155D)  # EX_Height
+            asm.emit("S_PUSH", table); asm.emit("PUSH", 0); asm.emit("CALLFUNC", 0x155D)  # EX_Height
         assign(total, height)
         value(local(total)); asm.emit("PUSH", ROW_LIMIT); asm.emit("LTE"); asm.emit("IFZ", "reject")
         value(local(row)); value(local(total)); asm.emit("LT"); asm.emit("IFZ", "reject")
@@ -100,18 +106,18 @@ def install_card_management(add_function):
         assign(end, page_end)
 
         asm.label("row")
-        load_text(card_id, ID); load_text(character_id, CHARACTER)
+        load_text(card_id, id_field); load_text(character_id, character_field)
         assign(flags, owned)
         text(card_id); asm.emit("CALLFUNC", 0x70C9); asm.emit("IFNZ", "publish")  # Consumable reward
         # The table's integration marker affects inheritance, while the game can grant these cards.
-        for test_id in (0x32B1, 0x32B2):
+        for test_id in test_ids:
             text(card_id); asm.emit("S_PUSH", test_id); asm.emit("S_EQUALE"); asm.emit("IFNZ", "publish")
-        table_field(TYPE, 0x156C); asm.emit("PUSH", 88); asm.emit("EQUALE"); asm.emit("IFNZ", "publish")
+        table_field(type_field, 0x156C); asm.emit("PUSH", 88); asm.emit("EQUALE"); asm.emit("IFNZ", "publish")
         def add_flag(flag):
             value(local(flags)); asm.emit("PUSH", flag); asm.emit("ADD")
         assign(flags, lambda: add_flag(2))
         value(local(character_id)); asm.emit("CALLHLL", 30, 4, -1); asm.emit("IFNZ", "publish")
-        table_field(TYPE, 0x156C); asm.emit("PUSH", 10); asm.emit("EQUALE"); asm.emit("IFNZ", "publish")
+        table_field(type_field, 0x156C); asm.emit("PUSH", 10); asm.emit("EQUALE"); asm.emit("IFNZ", "publish")
         assign(flags, lambda: add_flag(4))
 
         asm.label("publish")

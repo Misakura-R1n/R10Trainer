@@ -84,7 +84,7 @@ public sealed class MainViewModel : ObservableObject
         ShowNotice = snapshot.Notice is not null || snapshot.Connection != ConnectionState.Ready;
         Notice = snapshot.Notice ?? (snapshot.Connection switch
         {
-            ConnectionState.Searching => "等待游戏连接。启动受支持的中文 BugFix 版后，将自动识别。",
+            ConnectionState.Searching => "等待游戏连接。启动所选目录中的受支持版本后，将自动识别。",
             ConnectionState.Loading => "游戏数据尚未就绪。已有请求会在适用场景恢复，也可以随时取消。",
             ConnectionState.Unsupported => "当前游戏版本不受支持，已停用修改功能。",
             ConnectionState.RestorePending => "正在恢复本实例的脚本补丁。恢复完成前将保留此窗口和连接。",

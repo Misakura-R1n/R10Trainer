@@ -4,12 +4,12 @@
 
 | 项目 | 当前配置 |
 |---|---|
-| 开发版本 | v0.7.0，C# / .NET 10 / WPF，`win-x86` |
-| 游戏版本 | 中文 BugFix 版，原始文件指纹见 [README](README.md#支持范围与限制) |
+| 开发版本 | v0.8.0，C# / .NET 10 / WPF，`win-x86` |
+| 游戏版本 | 六种中文补丁、中文原版和日文原版，文件指纹见 [README](README.md#支持范围与限制) |
 | 源码 | 开发分支 `codex/component-optimizations`，默认分支 `codex/initial-import`。[私有仓库 R10Trainer](https://github.com/Misakura-R1n/R10Trainer) |
 | 最近发布 | 玩家包 `R10Trainer-v0.6.3-win-x86.zip`。[v0.6.3](https://github.com/Misakura-R1n/R10Trainer/releases/tag/v0.6.3) |
-| 本地构建产物 | `artifacts/R10Trainer-v0.7.0-win-x86/` 及同名 ZIP |
-| 构建身份 | 包内 `build-info.json` 记录版本、源码提交、工作树状态和组件指纹 |
+| 本地构建产物 | `artifacts/R10Trainer-v0.8.0-win-x86/` 及同名 ZIP |
+| 构建身份 | 包内 `build-info.json` 记录版本、源码提交、工作树状态和八种配方指纹 |
 
 安装、升级和构建参数见 [README](README.md)。协作规则见 [AGENTS.md](AGENTS.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -21,21 +21,15 @@
 |---|---|
 | .NET SDK | `global.json` 固定 10.0.403。用 `dotnet --list-sdks` 确认版本，PATH 中缺少匹配版本时使用 `-DotNetPath` 指定 SDK 的可执行文件。 |
 | 原生与 AIN 工具 | MinGW x86 工具与 alice-tools 0.13 分别由 `-BridgeToolchain` 和 `-AlicePath` 指定。默认路径见构建脚本。 |
-| 原始 AIN 与实机源文件 | 源游戏目录及原始哈希见 `artifacts/live/battle-features-sandbox.json`。组件构建使用该目录中符合原始指纹的 AIN。 |
+| 多版本构建输入 | `artifacts/patch-compatibility-inputs/<版本 ID>/Rance10.ain`。`bugfix` 与 `japanese-original` 子目录含对应的 EXE 和 INI。源压缩包来自 `D:\game\rc1-10\兰斯10补丁` 与 `D:\game\rc1-10\原版未打补丁和日版`。 |
+| 中文 BugFix 实机源文件 | 源游戏目录和指纹见 `artifacts/live/battle-features-sandbox.json`。 |
 | 0.7.0 实机数据 | 游戏副本保留在 `artifacts/battle-features-game/`，约 4.08 GB。独立存档在 Windows 文档目录的 `AliceSoft/R10BattleFeaturesSandbox/SaveData`。验证使用序曲战斗前自动档 `LocalSave5005.asd`。 |
 | 0.6.3 实机数据 | 游戏副本已清理。存档保留在 Windows 文档目录的 `AliceSoft/R10FeatureAuditSandbox/SaveData`，副本来源和身份见 `artifacts/live/feature-audit-sandbox.json`。 |
 | 卡片管理实机数据 | 0.6.0 和 0.6.2 的游戏副本已清理。隔离存档位置见 `artifacts/live/card-management-sandbox.json` 和 `artifacts/live/card-access-sandbox.json`。0.6.2 的验证新档为 `LocalSave02.asd`。 |
 | MCP 构建产物 | 常规 MCP 为 `artifacts/R10Developer/mcp/R10.Mcp.exe`，语义控制版为 `artifacts/R10Developer-controls/mcp/R10.Mcp.exe`。 |
 | 隔离副本 | 用 [README 的副本准备命令](README.md#准备实机副本)创建新目录和独立存档名称，测试前核对进程、组件与存档位置。 |
 
-0.7.0 新增普通战斗能力位 `1024`。能力值为 `full=2031`、`controls=2047`，玩家包使用 `full`。最终构建及隔离实机的组件身份如下。
-
-| 组件文件 | SHA-256 |
-|---|---|
-| `full` AIN 解压内容 | `E8A93169E06209E422BF52E37C9D08B69EDB1D0D8013DACEEA513C50DBE6DF5B` |
-| `full` AIN 压缩构建产物及实机副本 | `C171732DF07A76D542CEC3ABE99900B71CDC17CE56BC9D27A8848394D4F0C949` |
-| 玩家包最终 `R10Bridge.dll` | `0AE3DB320BD1025DA9572F40EFC51B9D4285282CD4DC1CDA70596A7121127D83` |
-| 隔离实机功能测试使用的 `R10Bridge.dll` | `1A5E8D37214FEB0A4CDA8AA93927B95848D645D1BA650CC136E20CAA6D63CC5E` |
+中文 BugFix 的 `full` AIN 内容指纹沿用 0.7.0。日版增加能力位 `2048`，卡片回包声明 CP932。整合补丁与「自动战斗＋餐券无需 SL」使用 `4096` 标识由游戏补丁控制食券和重配，并清除组件开关能力位 `64` 与 `128`。多版本配方包使用 schema 2，安装备份清单沿用 schema 1。
 
 `artifacts/` 和 `.tools/` 为本地目录。新测试副本使用独立的安装与恢复流程，避开 `.r10trainer-hp` 管理的玩家安装目录。
 
@@ -52,13 +46,16 @@
 | 掉落去重 | `scripts/bridge/cards_ain.py`，围绕 `SceneGetCard@CreateCard` 管理同步批次并过滤两个卡池分支 |
 | 重抽、重配与资源等级 | `scripts/bridge/feature_ain.py`、`scripts/bridge/data_ain.py`，切换游戏条件分支并调用游戏的资源和等级方法 |
 | 外部数据与锁定 | `src/R10.Core/Data/R10DataEngine.cs`、`src/R10.Core/GameLoadFence.cs`、`src/R10.Core/TrainerRuntime.cs`，按写入归属与当前阶段检查回滚，读档代次或会话变化取消旧锁 |
-| AIN 构建、识别和配方 | `scripts/bridge/build_instrumented_ain.py`、`scripts/bridge/controls_ain.py`、`scripts/bridge/export_portable_patch.py`、`src/R10.Core/Memory/GameConnection.cs`、`src/R10.Bridge.Install/AinPatch.cs` |
+| AIN 构建、识别和配方 | `src/R10.Core/Memory/GameVersions.json` 固定 EXE 与 AIN 指纹。`scripts/bridge/ain_profiles.py` 维护各版的段边界和调用点位移，`scripts/bridge/export_portable_patch.py` 生成配方。 |
 | MCP 与协议 | `src/R10.Mcp/McpServer.cs`、`src/R10.Mcp/GameInput.cs`、`src/R10.Bridge.Client/BridgeProtocol.cs` |
 
 ## 验证入口
 
 | 层级 | 本地证据 |
 |---|---|
+| 0.8.0 多版本离线与临时文件安装恢复 | `artifacts/bridge/v0.8.0-compatibility-build.log`，各版的 AIN 校验产物见 `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/`。覆盖八份脚本及 EXE／AIN 错配拒绝。 |
+| 0.8.0 协议与 x86 辅助进程 | 同一日志记录中文 CP936 与日文 CP932 卡名、两项重抽规则的开关归属及原生回归。安装测试的符号链接用例因 Windows 权限不足跳过。 |
+| 0.8.0 本地玩家包 | `artifacts/bridge/v0.8.0-package-build.log`，包内各配方身份见 `build-info.json`。 |
 | 0.7.0 模拟与离线检查 | `artifacts/live/battle-features-validation.log`。覆盖功能路由、HP 草稿失效、数值边界、AIN 插桩和安装恢复。符号链接用例因 Windows 权限不足跳过。 |
 | 0.7.0 x86 辅助进程 | 同一日志记录两个配置各 118 项原生检查。HP 执行途中退出战斗后，旧命令会被拒绝，后续命令仍可进入队列。 |
 | 0.7.0 界面演示 | `artifacts/live/battle-features-gameplay.jsonl` 的 `demo-wpf-*` 条目。覆盖战斗页控件、滚动、AP 读数和 HP 上限提示。 |
@@ -72,9 +69,9 @@
 | 0.6.2 卡片资格、获取及存读档 | `artifacts/live/card-access-live.jsonl`、`artifacts/live/card-access-mcp.jsonl` |
 | 0.6.0 版本区分、共享 ★、读档保护和原文件校验 | `artifacts/live/card-management-live.jsonl`、`artifacts/live/card-management-mcp.jsonl`、`artifacts/live/card-management-isolation.json` |
 
-0.7.0 隔离实机确认了双方 HP 写入至 1 和当前上限、AP 耗尽后补满、同回合连发、原生限次技能再次施放以及结算后停用 HP 编辑。三个越界输入的实机记录为辅助进程超时，明确拒绝及是否存在迟到写入待确认。附加测试 AIN 用于验证 AP 上限 10、中毒、睡眠、眩晕、石化与单次行动上限，相关证据使用上表的实机 DLL。
+0.8.0 仅执行离线、辅助进程和临时文件验证。新增版本待用各自的隔离存档核对游戏启动、进程连接、战斗写入和卡表读取。
 
-最终 DLL 增加了 HP 写入触发场景退出时的队列清理，已通过 x86 原生回归。最终 DLL 的游戏内复测暂停，待恢复实机操作后核对。隔离副本递归删除被环境策略拒绝，目录保留。
+0.7.0 隔离实机确认了双方 HP 写入至 1 和当前上限、AP 耗尽后补满、同回合连发、原生限次技能再次施放以及结算后停用 HP 编辑。三个越界输入的实机记录为辅助进程超时，明确拒绝及是否存在迟到写入待确认。附加测试 AIN 覆盖 AP 上限 10、中毒、睡眠、眩晕、石化与单次行动上限，使用的 DLL 指纹记录在 `battle-features-integrity.json`。HP 写入触发场景退出时的队列清理有 x86 回归，最终组件的实机复测待完成。
 
 既有功能的实机覆盖范围见 [README](README.md#兼容性验证)。食券重抽与自动战斗重配待验证完整游戏内交互。掉落去重的餐券补位、固定卡预留、消耗型奖励及第二部过滤分支有离线覆盖。HP 保护的致死、毒伤、反射、简易战斗和其他章节仍需专项实机样例。卡片管理使用角色和装备样例验证，其他开放条目的实机检查覆盖获取资格。
 

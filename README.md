@@ -1,10 +1,10 @@
 # R10 修改器
 
-独立的 Windows 桌面修改器，C# / .NET 10 / WPF，适配中文 BugFix 版《兰斯 10》。界面支持明暗主题、高 DPI、分类侧栏和窄窗口布局。
+独立的 Windows 桌面修改器，C# / .NET 10 / WPF，适配指定的《兰斯 10》中文补丁、中文原版和日文原版。界面支持明暗主题、高 DPI、分类侧栏和窄窗口布局。
 
-**当前版本 0.7.0 · Windows x86**
+**当前版本 0.8.0 · Windows x86**
 
-[版本发布](https://github.com/Misakura-R1n/R10Trainer/releases) · [升级与恢复](#升级与恢复) · [功能](#功能) · [开发与构建](#开发与构建)
+[版本发布](https://github.com/Misakura-R1n/R10Trainer/releases) · [升级与恢复](#升级与恢复) · [功能](#功能) · [支持范围](#支持范围与限制) · [开发与构建](#开发与构建)
 
 源码仓库中的 `CHANGELOG.md` 记录版本变化，`AGENTS.md` 定义维护规范，`HANDOFF.md` 记录当前开发状态和验证入口。
 
@@ -26,7 +26,7 @@
 2. 将新版玩家包解压到新目录，启动新版修改器并选择原游戏目录。
 3. 如果提示旧版组件，先点击“恢复游戏文件”，成功后再点击“安装游戏组件”，最后重新启动游戏。
 
-0.7.0 的新战斗功能需要随包更新的 AIN 和 DLL。安装会备份并替换 `Rance10.ain`，修改 `AliceStart.ini` 的 DLL 加载项，再添加 `R10Bridge.dll`。请保留游戏目录内的 `.r10trainer-hp`。恢复时，安装器还原 AIN 与 INI，移除安装时添加的 DLL，并将备份归档为 `.r10trainer-hp.restored-<标识>`。若目标文件已被其他补丁修改，安装器会拒绝覆盖。
+安装器根据当前 EXE 和 AIN 选择配方，备份并替换 `Rance10.ain`，在 `AliceStart.ini` 中添加 `R10Bridge.dll` 的加载项。请保留游戏目录内的 `.r10trainer-hp`。恢复时，安装器逐字节还原安装前的 AIN 和 INI，移除组件 DLL，并将备份归档为 `.r10trainer-hp.restored-<标识>`。已应用的游戏补丁仍是恢复后的版本。若目标文件已被其他补丁修改，安装器会拒绝覆盖。
 
 要停用整个组件，正常关闭修改器、退出游戏后执行“恢复游戏文件”。确认恢复成功后，可移除解压的修改器目录。直接删除修改器目录不会卸载游戏组件；恢复也不会撤销已经写入存档的数值或领取的奖励。
 
@@ -83,7 +83,7 @@ HP 输入绑定当前行动阶段和战斗目标。读档、目标替换或行�
 
 ### 卡片管理
 
-在地图或其他可操作场景打开侧栏的 **卡片管理**。目录从游戏自己的卡牌表读取，可搜索卡名和角色名，或筛选已拥有、未拥有。进入战斗、奖励选择或读档过程时，页面暂停操作并等待新的可用状态。
+在地图或其他可操作场景打开侧栏的 **卡片管理**。目录从游戏自己的卡牌表读取，卡名和角色名沿用游戏语言，可搜索名称或筛选已拥有、未拥有。进入战斗、奖励选择或读档过程时，页面暂停操作并等待新的可用状态。
 
 选择未拥有的卡片版本，点击 **获取此卡**。游戏按具体卡片 ID 入库，同一版本重复请求会保留已有卡片和叠卡数。0.6.2 开放原卡表 `削除 = 88` 的 137 个版本，其中 124 个角色版本支持共享 ★，13 个装备或道具版本可以获取。拟态消耗品和测试条目只供查看。
 
@@ -91,26 +91,32 @@ HP 输入绑定当前行动阶段和战斗目标。读档、目标替换或行�
 
 ## 支持范围与限制
 
-安装前校验原始游戏文件的 SHA-256。
+安装和连接时按 EXE 与 AIN 的组合校验，启动配置须使用 `CodeName = "Rance10.ain"`。以下 AIN 指纹对应安装组件前的文件。中文各行使用同一个 `Rance10.exe`，SHA-256 为 `39A508C05B13AFC5427F0B722FCE5C4EDECED126587E037D585CF0E70D279297`。日版的 EXE SHA-256 为 `4CE6537D8E09D1AE43043A456C67381982D25A14BDF59BEBF874623CA16E4536`。
 
-| 文件 | SHA-256 |
+| 版本 | 安装前 `Rance10.ain` SHA-256 |
 |---|---|
-| Rance10.exe | `39A508C05B13AFC5427F0B722FCE5C4EDECED126587E037D585CF0E70D279297` |
-| Rance10.ain | `7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A` |
+| 兰斯10bug修复补丁 | `7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A` |
+| 40级补丁＋百分百宝箱补丁 | `91D546D79A96155971D8ECAF8E782A8A008FF9C672D18B60D578F7E67FC6E8A2` |
+| 百分百宝箱补丁 | `143955FF2C23F59E4417BE89A618207BC14090B3DA8680ECC0F036139BDB3F83` |
+| 宝箱卡牌可获取＋1 | `4D8E619C617E684B3B794F4429C52721FC0702AFAFC7A8E699EB37EDF8241215` |
+| 整合补丁（RAR 与 ZIP 内的 AIN 相同） | `C18DD5D18230145CFEDEFAA8194BFE0BBEFCA59C31CC2AE1BE7F281B333B0771` |
+| 自动战斗＋餐券无需 SL | `648F487F0BFF944DB83508DDA3CF05CD1CBAE2F0425125662D340D949A293774` |
+| 中文原版（未打补丁） | `85A7B91D74186AA44B2B5319FC036988344FBE45C9CC7CF7CBE2C3A4C5115247` |
+| 日文原版 | `21C2209CA1A86F07B78E399900505151FB93E7DB4F092EB72848B9D90B5FDC60` |
 
-当前组件的 AIN 解压后内容指纹为 `E8A93169E06209E422BF52E37C9D08B69EDB1D0D8013DACEEA513C50DBE6DF5B`。指纹按脚本内容校验，允许压缩库产生不同的压缩字节。旧版玩家脚本仍可使用对应组件已支持的功能。
+组件按 AIN 解压内容校验，允许压缩库产生不同的压缩字节。适配版本及组件指纹见 [游戏版本清单](src/R10.Core/Memory/GameVersions.json)。
 
 - 回合只改变数值，不倒退剧情；资源、战果和等级修改可能随游戏保存，关闭修改器不会撤销已改数据。
 - 宝箱功能提高发现率。食券重抽保留正常消费规则。友情数值表示可用次数。
 - HP 组件覆盖选定的伤害调用点；致死、毒伤、反射、简单战斗及其他章节尚未逐项实机验证，不承诺所有扣血路径均被保护。
 - 外部内存功能的根链或对象变化会暂停写入并重新确认。接入组件后，读档代次或会话变化会取消回合、兵力和死亡率旧锁定，须确认新值后重新锁定；组件失联或心跳过期时暂停锁定。未接入组件时，沿用全部原地址的读档仍可能无法识别，应在读档前关闭锁定、读档后重开。特定结算阶段暂停死亡率写入。
-- 食券重抽与自动战斗重配使用组件开关，关闭时恢复原游戏分支，无需扫描或修改运行中的 AIN 指令。旧外部补丁引擎保留作原版兼容代码与回归测试，不对新版组件脚本写入。
+- 食券重抽与自动战斗重配使用组件开关，关闭时恢复原游戏分支。整合补丁及「自动战斗＋餐券无需 SL」沿用补丁自身的两项规则，界面显示「由游戏补丁控制」。
 - AIN 定位分片扫描并显示进度，取消和关闭优先处理；扫描、数据维护与界面刷新分别调度。游戏布局变化时只重扫受影响区域。文件校验和区域枚举仍是同步操作，不承诺严格响应时限。
 - 数据事务回滚不完整时停止此进程的后续数据写入，需重启游戏重新连接。跨进程写入与游戏执行并不构成原子事务。
 
 ### 兼容性验证
 
-实机范围为与文件指纹匹配的中文 BugFix 版，使用隔离副本的序曲地图、普通战斗与宝箱结算。
+0.8.0 的八种文件组合均通过 AIN 插桩校验、组件安装和安装前文件的逐字节恢复检查。日文卡名另有 CP932 协议测试和 x86 辅助进程测试。下表为此前中文 BugFix 隔离副本的游戏内覆盖，其他版本的游戏内效果待验证。
 
 | 场景 | 实机覆盖 |
 |---|---|
@@ -130,8 +136,8 @@ HP 输入绑定当前行动阶段和战斗目标。读档、目标替换或行�
 
 - Python 3.11+，脚本仅使用标准库，无需安装 pip 依赖。
 - 支持 `-m32` 和 `i386pe` 的 MinGW 工具目录，含 `gcc.exe`、`ld.exe`、`dlltool.exe` 和 `as.exe`。
-- alice-tools 0.13 的 `alice.exe`，构建使用 CP936 输入与 UTF-8 输出。
-- 与本文指纹匹配的原始 `Rance10.ain`。
+- alice-tools 0.13 的 `alice.exe`，中文脚本使用 CP936、日文脚本使用 CP932，解析输出为 UTF-8。
+- 与本文指纹匹配的中文 BugFix `Rance10.ain`，同目录保留 `Rance10.exe` 和 `AliceStart.ini`。构建多版本玩家包还需其他版本各一份未安装组件的 AIN。日版需提供同目录的日版 EXE 和 INI。
 
 这些工具不需要交给玩家。脚本的 MinGW 和 alice 默认路径属于原开发环境，换机器时必须显式指定自己的路径。
 
@@ -152,11 +158,14 @@ $build = @{
     PythonPath = 'python'
     BridgeToolchain = 'C:\Tools\mingw64\bin'
     AlicePath = 'C:\Tools\alice\alice.exe'
-    SourceAin = 'D:\Games\Rance10\Rance10.ain'
+    SourceAin = 'D:\R10Inputs\bugfix\Rance10.ain'
 }
 
-# 生成 full 组件、执行附加检查并打包
-./scripts/build.ps1 @build -Bridge -Publish
+# 每个子目录对应一种脚本，整合补丁的 RAR 与 ZIP 任选其一
+$ids = 'level40-treasure', 'treasure', 'extra-card', 'combined',
+       'auto-food', 'chinese-original', 'japanese-original'
+$compatibilityAin = $ids | ForEach-Object { "D:\R10Inputs\$_\Rance10.ain" }
+./scripts/build.ps1 @build -Bridge -CompatibilityAin $compatibilityAin -Publish
 
 # 单独构建开发用 MCP
 ./scripts/build.ps1 -DeveloperTools
@@ -165,9 +174,9 @@ $build = @{
 ./scripts/build.ps1 @build -Controls
 ```
 
-可用 `-DotNetPath`、`-BridgeToolchain`、`-PythonPath`、`-AlicePath` 指定本机工具路径。本地打包可用 `-Publish` 复用已核验的 `full` 组件。玩家输出为 `artifacts/R10Trainer-v<版本>-win-x86/` 及同名 ZIP；开发 MCP 输出为 `artifacts/R10Developer/mcp/`。
+可用 `-DotNetPath`、`-BridgeToolchain`、`-PythonPath`、`-AlicePath` 指定本机工具路径。`-Bridge -SourceAin` 默认生成中文 BugFix 配方，`-CompatibilityAin` 增加对应版本的配方。本地打包可用 `-Publish` 复用已核验的 `full` 组件。玩家输出为 `artifacts/R10Trainer-v<版本>-win-x86/` 及同名 ZIP，开发 MCP 输出为 `artifacts/R10Developer/mcp/`。
 
-玩家包中的游戏组件只包含自制 DLL 和小型 AIN 修改配方。安装时在玩家自己的 AIN 上应用配方，再核对完整结果。配方含 11,925 字节的变更数据。修改器嵌入来自游戏标题栏的 16×16 蓝色「R」图标，游戏本体、完整 AIN、数据文件和存档由玩家自行提供。原生 DLL 使用确定性 PE 时间戳，`build-info.json` 记录源文件和组件指纹。构建脚本不自动启动或修改真实游戏。
+玩家包中的游戏组件只包含自制 DLL 和小型 AIN 修改配方。安装时在玩家自己的 AIN 上应用配方，再核对完整结果。修改器嵌入来自游戏标题栏的 16×16 蓝色「R」图标，游戏本体、完整 AIN、数据文件和存档由玩家自行提供。原生 DLL 使用确定性 PE 时间戳，`build-info.json` 的 `bridge.profiles` 记录包内配方的版本和指纹。构建脚本不启动游戏。
 
 自动检查涵盖核心数据/补丁恢复、协议/统一运行时、原生组件、AIN 调用点、组件安装/恢复与副本准备。副本准备中的符号链接测试在缺少创建权限时显式跳过；真实游戏结果单独记录于上文。
 
@@ -177,19 +186,20 @@ $build = @{
 |---|---|
 | `./scripts/build.ps1` | 编译解决方案；核心逻辑、桥接协议及运行时、安装恢复的模拟或临时文件测试。 |
 | `-Bridge -SourceAin ...` | 增加 x86 原生辅助进程、AIN 插桩、卡池字节码、副本准备、生成 AIN 兼容性和真实文件副本安装恢复检查。需要完整工具路径。 |
+| `-Bridge -CompatibilityAin ...` | 为每份补充 AIN 生成独立配方，使用对应 EXE 和 INI 的临时文件副本验证安装与恢复。缺少独立 EXE 的中文补丁使用主输入的 EXE 和 INI。 |
 | `-Publish` | 增加核心 Win32 x86 辅助进程检查，生成自带运行时的玩家目录与 ZIP。依赖之前生成的玩家组件。 |
 | `-DeveloperTools` | 发布 MCP 并检查 `initialize` / `tools/list`，不连接游戏。 |
 | `-Controls -SourceAin ...` | 构建开发插桩与 MCP，检查原生辅助进程和 AIN 结构；卡池逻辑变更还应执行 `-Bridge` 的卡池检查。 |
 
 测试项目是可执行检查程序，统一用构建脚本运行；只执行 `dotnet test` 不能代替上述检查。失败必须处理，跳过项要说明原因。只有文档改动时检查命令参数、路径、链接与 `git diff --check` 即可，不需要启动游戏。
 
-发布时同步更新 `src/R10.App/R10.App.csproj` 中的版本与 `CHANGELOG.md`，从干净提交执行 `-Bridge -Publish`。玩家安装使用 `full` 组件，`controls` 单独用于开发。
+发布时同步更新 `src/R10.App/R10.App.csproj` 中的版本与 `CHANGELOG.md`，从干净提交执行多版本构建与打包命令。玩家安装使用 `full` 组件，`controls` 单独用于开发。
 
 校验 `build-info.json` 的版本、提交、工作树状态、源文件及组件指纹。发布脚本会覆盖同版本输出。玩家包包含 `bridge/`、运行时和 `licenses/`，排除 MCP、完整 AIN、游戏本体、数据文件、存档和个人设置。源码仓库目前未声明开源许可证。
 
 ### 准备实机副本
 
-组件构建与发布不会启动游戏。实机测试先使用独立副本，避免正常游戏与测试进度共用存档。以下命令使用 `-Controls` 的构建产物创建测试副本。
+组件构建与发布不会启动游戏。实机测试先使用独立副本，避免正常游戏与测试进度共用存档。以下命令使用 `-Controls` 的构建产物创建中文 BugFix 测试副本。
 
 ```powershell
 ./scripts/prepare-bridge-sandbox.ps1 `

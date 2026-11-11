@@ -7,6 +7,7 @@
 #define EXECUTING 4 /* Internal state; externally still pending until acknowledged. */
 #define CARD_CAPABILITY 512
 #define BATTLE_CAPABILITY 1024
+#define CARD_CP932 2048
 #define CARD_PAGE_SIZE 32
 #define CARD_ROW_LIMIT 4096
 #define CARD_TEXT_BYTES 64
@@ -95,6 +96,7 @@ static char *hexBytes(char *p,const unsigned char *bytes,unsigned length) {
     return p;
 }
 static char *cardPayload(char *p,const Command *command,const CardResult *result) {
+    if (state.capabilities & CARD_CP932) p=field(p,",\"cardCodePage\":",932);
     p=field(p,",\"cardTotal\":",result->total);
     p=put(p,",\"cardRows\":[");
     for (LONG i=0;i<result->count;i++) {

@@ -36,9 +36,10 @@ public sealed class FeatureViewModel : ObservableObject
     public bool CanLock => !_busy && (_observation.CanEdit || (_canCancel && LockRequested));
     public string? Error => _operationError ?? _observation.Error;
     public bool HasError => !string.IsNullOrWhiteSpace(Error);
-    public bool HasState => IsToggle ? Requested : LockRequested;
-    public string StateText => IsToggle ? (Requested ? (_observation.Active ? "已应用" : PendingText("等待应用")) : "")
-        : LockRequested ? (_observation.LockActive ? "锁定中" : PendingText("等待锁定")) : "";
+    public bool HasState => _observation.StatusText is not null || (IsToggle ? Requested : LockRequested);
+    public string StateText => _observation.StatusText ?? (IsToggle
+        ? Requested ? (_observation.Active ? "已应用" : PendingText("等待应用")) : ""
+        : LockRequested ? (_observation.LockActive ? "锁定中" : PendingText("等待锁定")) : "");
     public string StateDescription
     {
         get

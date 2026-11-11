@@ -4,13 +4,16 @@ import argparse
 import base64
 import json
 from pathlib import Path
-import struct
 import zlib
-from build_instrumented_ain import build, SECTION_BOUNDS, new_function_record, sha, SOURCE_SHA, artifact_directory
+from ain_profiles import LAYOUTS, VERSION_BY_SOURCE
+from build_instrumented_ain import build, new_function_record, sha, artifact_directory, require
 
 
 def export(source: bytes, dll: bytes) -> dict:
     generated, report, _ = build(source, 'full')
+    version = VERSION_BY_SOURCE[report['sourceSha256']]
+    require(report['outputPlainSha256'] == version['targetPlainSha256'] and
+            report['outputPlainLength'] == version['targetPlainLength'], 'Generated AIN does not match the version registry')
     original = zlib.decompress(source[16:])
     target = zlib.decompress(generated[16:])
     code_delta = report['newCodeLength'] - report['originalCodeLength']
@@ -19,7 +22,7 @@ def export(source: bytes, dll: bytes) -> dict:
     hll_delta = len(target) - len(original) - code_delta - func_delta
     edits = []
     shift = 0
-    for name, start, end in SECTION_BOUNDS:
+    for name, start, end in LAYOUTS[version['id']].sections:
         delta = {'CODE': code_delta, 'FUNC': func_delta, 'HLL0': hll_delta}.get(name, 0)
         old = original[start:end]
         new = target[start+shift:end+shift+delta]
@@ -43,26 +46,38 @@ def export(source: bytes, dll: bytes) -> dict:
         rebuilt.extend(original[cursor:edit['offset']]); rebuilt.extend(base64.b64decode(edit['data']))
         cursor = edit['offset'] + edit['remove']
     rebuilt.extend(original[cursor:])
-    assert bytes(rebuilt) == target
-    assert sum(len(base64.b64decode(e['data'])) for e in edits) <= 12 * 1024
-    return {'schema': 1, 'sourceSha256': SOURCE_SHA, 'sourcePlainSha256': sha(original),
-            'targetPlainSha256': sha(target), 'sourcePlainLength': len(original), 'targetPlainLength': len(target),
-            'exeSha256': '39A508C05B13AFC5427F0B722FCE5C4EDECED126587E037D585CF0E70D279297',
+    require(bytes(rebuilt) == target, 'Recipe does not reconstruct the generated AIN')
+    require(sum(len(base64.b64decode(e['data'])) for e in edits) <= 12 * 1024, 'Recipe exceeds the authored byte limit')
+    return {'schema': 1, 'sourceSha256': version['sourceSha256'], 'sourcePlainSha256': version['sourcePlainSha256'],
+            'targetPlainSha256': version['targetPlainSha256'], 'sourcePlainLength': len(original), 'targetPlainLength': len(target),
+            'exeSha256': version['exeSha256'],
             'dllSha256': sha(dll), 'edits': edits}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, required=True)
+    parser.add_argument('--source', type=Path, action='append', required=True)
     parser.add_argument('--dll', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args()
     output = artifact_directory(args.output_dir)
-    patch = export(args.source.read_bytes(), args.dll.read_bytes())
+    dll = args.dll.read_bytes()
+    patches = {}
+    for source in args.source:
+        raw = source.read_bytes()
+        source_hash = sha(raw)
+        require(source_hash not in patches, f"Duplicate source AIN: {source}")
+        patches[source_hash] = export(raw, dll)
+    recipes = [patches[source_hash] for source_hash in VERSION_BY_SOURCE if source_hash in patches]
+    patch = recipes[0] if len(recipes) == 1 else {'schema': 2, 'profiles': recipes}
     output.mkdir(parents=True, exist_ok=True)
     path = output/'hp-patch.json'
-    path.write_text(json.dumps(patch, ensure_ascii=False, indent=2), encoding='utf-8')
-    print(json.dumps({'path': str(path), 'bytes': path.stat().st_size, 'authoredBytes': sum(len(base64.b64decode(e['data'])) for e in patch['edits']), 'targetPlainSha256': patch['targetPlainSha256']}, ensure_ascii=False))
+    serialized = json.dumps(patch, ensure_ascii=False, indent=2).encode('utf-8')
+    require(len(serialized) <= 512 * 1024, 'Recipe bundle exceeds the installer size limit')
+    temporary = path.with_suffix('.tmp')
+    temporary.write_bytes(serialized)
+    temporary.replace(path)
+    print(json.dumps({'path': str(path), 'bytes': len(serialized), 'versions': [VERSION_BY_SOURCE[r['sourceSha256']]['id'] for r in recipes]}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

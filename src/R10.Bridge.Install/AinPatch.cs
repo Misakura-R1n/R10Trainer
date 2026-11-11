@@ -3,22 +3,17 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using R10.Core.Memory;
 
 namespace R10.Bridge.Install;
 
 internal sealed record PatchEdit(int Offset, int Remove, string ExpectedSha256, string Data);
 internal sealed record PatchRecipe(int Schema, string SourceSha256, string SourcePlainSha256, string TargetPlainSha256,
     int SourcePlainLength, int TargetPlainLength, string ExeSha256, string DllSha256, PatchEdit[] Edits);
-internal sealed record InstallProfile(string ExeHash, string SourceHash, string TargetPlainHash)
-{
-    internal static readonly InstallProfile Supported = new(
-        "39A508C05B13AFC5427F0B722FCE5C4EDECED126587E037D585CF0E70D279297",
-        "7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A",
-        "E8A93169E06209E422BF52E37C9D08B69EDB1D0D8013DACEEA513C50DBE6DF5B");
-}
 
 internal static class AinPatch
 {
+    private sealed record PatchBundle(int Schema, PatchRecipe[] Profiles);
     internal static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy=JsonNamingPolicy.CamelCase, WriteIndented=true, UnmappedMemberHandling=JsonUnmappedMemberHandling.Disallow };
     internal static string Hash(byte[] data) => Convert.ToHexString(SHA256.HashData(data));
     internal static bool Same(string? left, string? right) => string.Equals(left,right,StringComparison.OrdinalIgnoreCase);
@@ -45,16 +40,33 @@ internal static class AinPatch
         BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(12),compressed.Length);
         compressed.CopyTo(raw,16); return raw;
     }
-    internal static PatchRecipe Read(string path, InstallProfile profile)
+    internal static PatchRecipe Read(string path, GameVersion version)
     {
         var info=new FileInfo(path);
-        if (!info.Exists || info.Length>64*1024) throw new InvalidDataException("HP 组件补丁缺失或过大，请重新解压完整修改器。");
-        var patch=JsonSerializer.Deserialize<PatchRecipe>(File.ReadAllBytes(path),Json) ?? throw new InvalidDataException("HP 组件补丁无效。");
-        if (patch.Schema!=1 || !Same(patch.SourceSha256,profile.SourceHash) || !Same(patch.ExeSha256,profile.ExeHash)
-            || !Same(patch.TargetPlainSha256,profile.TargetPlainHash) || patch.Edits is null || patch.Edits.Length is 0 or >256
+        if (!info.Exists || info.Length>512*1024) throw new InvalidDataException("组件补丁缺失或过大，请重新解压完整修改器。");
+        using var document=JsonDocument.Parse(File.ReadAllBytes(path));
+        var root=document.RootElement;
+        if (root.ValueKind!=JsonValueKind.Object || !root.TryGetProperty("schema",out var schema)
+            || schema.ValueKind!=JsonValueKind.Number || !schema.TryGetInt32(out int number))
+            throw new InvalidDataException("组件补丁格式无效。");
+        PatchRecipe[]? recipes=number switch
+        {
+            1 when root.Deserialize<PatchRecipe>(Json) is { } single => [single],
+            2 => root.Deserialize<PatchBundle>(Json)?.Profiles,
+            _ => null
+        };
+        if (recipes is null || recipes.Length<1 || recipes.Length>GameVersions.All.Count || recipes.Any(recipe=>recipe is null))
+            throw new InvalidDataException("组件配方清单无效。");
+        var matches=recipes.Where(recipe=>Same(recipe.SourceSha256,version.SourceSha256) && Same(recipe.ExeSha256,version.ExeSha256)).ToArray();
+        if (matches.Length==0) throw new InvalidDataException($"此安装包缺少 {version.Name} 的组件配方。");
+        if (matches.Length!=1) throw new InvalidDataException("组件配方重复。");
+        var patch=matches[0];
+        if (patch.Schema!=1 || !Same(patch.SourcePlainSha256,version.SourcePlainSha256)
+            || !Same(patch.TargetPlainSha256,version.TargetPlainSha256) || patch.TargetPlainLength!=version.TargetPlainLength
+            || patch.Edits is null || patch.Edits.Length is 0 or >256
             || patch.SourcePlainLength is <8 or >33554432 || patch.TargetPlainLength is <8 or >33554432
             || patch.Edits.Any(x=>x is null || x.Data is null || x.ExpectedSha256 is null))
-            throw new InvalidDataException("HP 组件与此修改器的适配版本不一致。");
+            throw new InvalidDataException("组件配方与此修改器的适配版本不一致。");
         return patch;
     }
     internal static byte[] Apply(byte[] raw, PatchRecipe patch)

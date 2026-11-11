@@ -56,6 +56,20 @@ static class RuntimeTests
             Check((await runtime.TryCloseAsync()).Success);
             Check(client.FeatureWrites.SequenceEqual(new[]{"food_redraw:True","auto_redistribute:True","food_redraw:False","auto_redistribute:False"}));
         });
+        await test("existing game patch owns both reroll rules", async () =>
+        {
+            var client=new RuntimeFixture { State=Ready() with { Capabilities=5935 } };
+            var runtime=new BridgeTrainerRuntime(client);
+            Check((await runtime.SetToggleAsync(FeatureId.Hp,true)).Success);
+            foreach (var feature in new[] { FeatureId.Redraw, FeatureId.Redistribute })
+            {
+                var observation=runtime.Current.Features[feature];
+                Check(!observation.CanEdit && !observation.Requested && observation.StatusText is not null);
+                Check(!(await runtime.SetToggleAsync(feature,true)).Success);
+            }
+            Check((await runtime.TryCloseAsync()).Success);
+            Check(client.FeatureWrites.SequenceEqual(new[]{"hp_guard:True","hp_guard:False"}));
+        });
         await test("card capability, ownership and HP close independently", async () =>
         {
             var client=new RuntimeFixture(); var runtime=new BridgeTrainerRuntime(client);

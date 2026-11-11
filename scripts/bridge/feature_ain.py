@@ -6,8 +6,9 @@ original instruction; no running CODE bytes are mutated by the trainer.
 import struct
 
 
-def install_features(add_function, replace_code, instruction):
+def install_features(add_function, replace_code, instruction, relocate):
     def conditional(name, pc, original, patched, feature):
+        pc = relocate(pc)
         def body(a):
             a.emit('PUSH', feature); a.emit('PUSH', 0); a.emit('PUSH', 0)
             a.emit('CALLHLL', 36, 4, -1)
@@ -25,5 +26,5 @@ def install_features(add_function, replace_code, instruction):
     conditional('R10Bridge_FoodTicketDelay', 0x3B1318,
                 instruction('PUSH', 2000), instruction('PUSH', 0), 6)
     conditional('R10Bridge_AutoBattleRepick', 0x3E4B34,
-                struct.pack('<Hii', 0xF4, 0x435, 0x3E4B44),
-                struct.pack('<Hii', 0xF4, 0x435, 0x3E4BA4), 7)
+                struct.pack('<Hii', 0xF4, 0x435, relocate(0x3E4B44)),
+                struct.pack('<Hii', 0xF4, 0x435, relocate(0x3E4BA4)), 7)

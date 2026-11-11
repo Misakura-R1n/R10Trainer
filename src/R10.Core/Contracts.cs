@@ -53,7 +53,10 @@ public static class FeatureCatalog
 }
 public sealed record FeatureObservation(decimal? Value = null, bool Requested = false, bool Active = false,
     bool CanEdit = false, bool LockRequested = false, bool LockActive = false, string? Error = null, string? Detail = null,
-    string? Help = null, string? ActiveDescription = null, decimal? Maximum = null);
+    string? Help = null, string? ActiveDescription = null, decimal? Maximum = null)
+{
+    public string? StatusText { get; init; }
+}
 public sealed record TrainerSnapshot(ConnectionState Connection, string Status, int? ProcessId,
     bool IsSimulation, IReadOnlyDictionary<FeatureId, FeatureObservation> Features, string? Error = null,
     string RuntimeMode = "memory", string? Notice = null)
