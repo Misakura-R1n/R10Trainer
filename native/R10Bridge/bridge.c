@@ -15,6 +15,7 @@
 #define CARD_TEXT_BYTES 64
 #define CARD_KEY_SIZE (CARD_TEXT_BYTES*4+2)
 enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR };
+enum { CARD_SCENE_SCOPE=12, CARD_SCENE_READY=13 };
 enum { BATTLE_HP=14, BATTLE_AP_FULL, BATTLE_UNLIMITED_SKILLS, BATTLE_IMMUNITY, BATTLE_REPEAT, BATTLE_UNLIMITED_ACTIONS };
 enum { BATTLE_FLAG, BATTLE_ENTER, BATTLE_LEAVE, BATTLE_AP, BATTLE_CLAIM_HP, BATTLE_HP_VALUE,
        BATTLE_FINISH_HP, BATTLE_TARGET_CHANGED, BATTLE_REFRESH_SELECTOR };
@@ -39,7 +40,7 @@ typedef struct {
     LONG noDuplicateCards, cardBatch, cardBatchEnabled, filteredCards, fallbackCards;
     LONG foodRedraw, autoRedistribute, extraTreasurePick;
     LONG resourcesFull, dataReady, food, medal, friendship, unit;
-    LONG cardReady, cardContext;
+    LONG cardReady, cardContext, cardSceneDepth, cardScenesAtLoad;
     LONG selector, controlEnabled, battleReady; DWORD battleTick;
     LONG battleVmContext, battleTarget, battleContext, battleRules, battleAp, battleApMax, battleRefresh;
     Command commands[HISTORY];
@@ -343,17 +344,24 @@ int __cdecl Tick(int marker,int a,int b) {
     state.heartbeat++; state.lastTick=GetTickCount();
     if (marker==0) {
         state.dataReady=0; state.cardReady=0; state.cardBatch=-1; state.cardBatchEnabled=0; state.scriptVersion=a; state.capabilities=b;
+        state.cardSceneDepth=state.cardScenesAtLoad=0;
         state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
     }
     else if (marker==1) { state.frame++; if (state.phase==0) state.phase=1; }
     else if (marker==2) {
         state.dataReady=0; state.cardReady=0;
+        state.cardScenesAtLoad=state.cardSceneDepth;
         state.cardBatch=-1; state.cardBatchEnabled=0;
         state.generation++; state.phase=2; state.loadKind=a; state.loadSlot=b; state.lastLoadOutcome=0;
         state.playerHp=state.playerHpMax=state.enemyHp=state.enemyHpMax=-1;
         state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
-    } else if (marker==3 && state.phase==2 && state.loadKind==a) { state.phase=1; state.lastCompletedGeneration=state.generation; state.lastLoadOutcome=1; }
-    else if (marker==4 && state.phase==2 && state.loadKind==a) { state.phase=0; state.lastLoadOutcome=2; }
+    } else if (marker==3 && state.phase==2 && state.loadKind==a) {
+        // Restore can abandon pre-load scenes. Preserve any scenes entered during restore.
+        state.cardSceneDepth-=state.cardScenesAtLoad; state.cardScenesAtLoad=0;
+        state.phase=1; state.lastCompletedGeneration=state.generation; state.lastLoadOutcome=1;
+    } else if (marker==4 && state.phase==2 && state.loadKind==a) {
+        state.cardScenesAtLoad=0; state.phase=0; state.lastLoadOutcome=2;
+    }
     else if (marker==10) { state.playerHp=a; state.playerHpMax=b; }
     else if (marker==11) { state.enemyHp=a; state.enemyHpMax=b; }
     else if (marker==12) { state.playerHp=state.playerHpMax=state.enemyHp=state.enemyHpMax=-1; }
@@ -531,9 +539,18 @@ int __cdecl CardEdit(int op,int a,int b) {
     EnterCriticalSection(&gate);
     LONG reply=0;
     Command *c=state.pendingId ? &state.commands[state.pendingId % HISTORY] : NULL;
-    int available=state.phase==1 && state.scriptVersion==1 && (state.capabilities & CARD_CAPABILITY);
-    if (op==0) {
-        int ready=available && a && state.cardContext<2147483647;
+    int hasCards=state.scriptVersion==1 && (state.capabilities & CARD_CAPABILITY);
+    int available=state.phase==1 && hasCards;
+    if (op==CARD_SCENE_SCOPE && hasCards) {
+        if (a==1 && state.cardSceneDepth<2147483647) {
+            ++state.cardSceneDepth;
+            state.cardReady=0;
+        } else if (a==-1 && state.cardSceneDepth>0) {
+            --state.cardSceneDepth;
+            if (state.cardScenesAtLoad>state.cardSceneDepth) state.cardScenesAtLoad=state.cardSceneDepth;
+        }
+    } else if (op==0 || op==CARD_SCENE_READY) {
+        int ready=available && a && state.cardSceneDepth==0 && state.cardContext<2147483647;
         if (ready && !state.cardReady) ++state.cardContext;
         state.cardReady=ready;
     } else if (c && cardCommand(c->kind) && c->generation==state.generation) {
@@ -565,7 +582,7 @@ int __cdecl CardEdit(int op,int a,int b) {
             else if (op==10) { result->nextExp=a; result->maxStar=b; }
             else if (op==11) {
                 result->total=b;
-                c->state=a && !result->invalid && available && c->context==state.cardContext ? 2 : 3;
+                c->state=a && !result->invalid && available && state.cardReady && c->context==state.cardContext ? 2 : 3;
                 state.lastCommandState=c->state; state.pendingId=0;
             }
         }

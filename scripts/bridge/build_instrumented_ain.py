@@ -382,7 +382,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         install_extra_treasure_pick(add_function, replace_code, instruction, entry, layout.has_extra_treasure_bonus)
         from data_ain import install_data
         hooks[1]["data"] = install_data(add_function)
-        from card_management_ain import install_card_management
+        from card_management_ain import install_card_management, install_card_scene_guards
+        install_card_scene_guards(add_function, replace_code, instruction, at)
         hooks[1]["cardManagement"] = install_card_management(add_function, sections["STR0"], encoding)
 
     if profile in {"full", "controls"}:

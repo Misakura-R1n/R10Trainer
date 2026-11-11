@@ -164,6 +164,7 @@ internal static class Program
     private static void TestCardManagement(Call edit)
     {
         const int generation = 6;
+        const int scene = 12, ready = 13;
         string Submit(int action, int context, string key = "", int star = 0, int loadGeneration = generation) =>
             JsonSerializer.Serialize(new { op = "card", action, argument = 0, argument2 = star, generation = loadGeneration, context, key });
         JsonElement Result(int id) => Request(JsonSerializer.Serialize(new { op = "get_command_result", id }));
@@ -196,16 +197,29 @@ internal static class Program
         Check(Result(mismatch).GetProperty("state").GetString()=="rejected", "mismatched identity leaves no applied result");
 
         int stale = Request(Submit(12,context,"4CC0BC.C0BC")).GetProperty("id").GetInt32();
-        edit(0,0,0); edit(0,1,0);
-        Check(Context()!=context && edit(1,0,0)==0 && Result(stale).GetProperty("state").GetString()=="rejected",
-            "leaving and reentering an eligible scene invalidates the old request");
-        context=Context();
+        edit(scene,1,0);
+        Check(Context()==0 && edit(1,0,0)==0 && Result(stale).GetProperty("state").GetString()=="rejected",
+            "entering battle immediately invalidates a queued card mutation");
+        edit(scene,1,0); edit(scene,-1,0); edit(ready,1,0);
+        Check(Context()==0 && Request(Submit(10,context)).GetProperty("error").GetString()=="card_context_changed",
+            "finishing a nested reward keeps card management blocked by the outer scene");
+        edit(scene,-1,0); edit(ready,1,0);
+        int resumedContext = Context();
+        Check(resumedContext>context && Request(Submit(10,context)).GetProperty("error").GetString()=="card_context_changed",
+            "finishing battle and rewards reopens card management with a fresh context");
+        context=resumedContext;
         int oldSave = Request(Submit(12,context,"4CC0BC.C0BC")).GetProperty("id").GetInt32();
+        edit(scene,1,0);
         tick(2,1,0); tick(1,16,16);
         Check(Context()==0 && edit(1,0,0)==0 && Result(oldSave).GetProperty("state").GetString()=="rejected",
             "loading cancels card commands and clears card readiness");
 
-        tick(3,1,0); tick(0,1,1007|2048); tick(1,16,16); edit(0,1,0);
+        edit(scene,1,0); tick(3,1,0); edit(ready,1,0);
+        Check(Context()==0, "a scene entered during restore continues to block card management");
+        edit(scene,-1,0); edit(ready,1,0);
+        Check(Context()>context, "restoring a save discards abandoned pre-load card scene scopes");
+
+        tick(0,1,1007|2048); tick(1,16,16); edit(ready,1,0);
         int japanese = Request(Submit(10,Context(),loadGeneration:generation+1)).GetProperty("id").GetInt32();
         Check(edit(1,0,0)==10, "Japanese card request claimed");
         edit(4,0,6);

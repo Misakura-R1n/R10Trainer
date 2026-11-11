@@ -378,6 +378,31 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(export, {"name": b"CardEdit", "returnType": 10,
                                  "arguments": [(b"op", 10), (b"a", 10), (b"b", 10)]})
 
+    def test_card_readiness_tracks_the_scene_calls(self):
+        vm = self.vm()
+        ins = builder.instruction
+
+        def card_edit(op, value):
+            return ins("PUSH", op) + ins("PUSH", value) + ins("PUSH", 0) + ins("CALLHLL", 36, 6, -1) + ins("POP")
+
+        for name, pc, op, operand in (
+            ("Battle", 0x3FF994, "CALLFUNC", 0x6711),
+            ("BattleResult", 0x3FFA7C, "CALLFUNC", 0x6711),
+            ("SimpleBattle", 0x3FFD8E, "CALLFUNC", 0x670B),
+            ("SimpleBattleResult", 0x3FFE14, "CALLMETHOD", 0),
+            ("CardReward", 0x4097B0, "CALLFUNC", 0x6711),
+        ):
+            with self.subTest(scene=name):
+                entry = vm.by_name[f"R10Bridge_CardScene{name}"]["entry"]
+                self.assertEqual(vm.code[pc:pc + 6], ins("JUMP", entry))
+                continuation = card_edit(12, 1) + ins(op, operand) + card_edit(12, -1) + ins("JUMP", pc + 6)
+                self.assertEqual(vm.code[entry:entry + len(continuation)], continuation)
+
+        pump = bytes.fromhex(vm.by_name["R10Bridge_CardManagement"]["bytes"])
+        self.assertNotIn(ins("PUSHGLOBALPAGE") + ins("PUSH", 0x124) + ins("REF"), pump)
+        self.assertIn(card_edit(13, 1), pump)
+        self.assertIn(card_edit(13, 0), pump)
+
     def test_player_battle_callback_refills_ap_and_applies_one_hp_setter(self):
         for maximum, side, hp in ((6, 0, 750), (10, 1, 250)):
             vm = ControlVm(self.generated, self.report)

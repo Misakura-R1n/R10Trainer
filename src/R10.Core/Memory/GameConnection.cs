@@ -16,7 +16,7 @@ public sealed class GameConnection : IDisposable
     public static readonly string SupportedBridgeAinPlainHash = GameVersions.BugFix.TargetPlainSha256;
     public static readonly string SupportedBridgeAinFingerprint = GameVersions.BugFix.BridgeFingerprint;
     public static readonly int SupportedBridgeAinPlainLength = GameVersions.BugFix.TargetPlainLength;
-    public const uint SupportedBridgeCodeLength = 14582520;
+    public const uint SupportedBridgeCodeLength = 14582956;
     private static readonly (string ExeSha256, int Length, string Fingerprint)[] BridgeAinIdentities =
         [.. GameVersions.All.SelectMany(version => version.PreviousTargets
             .Select(target => (version.ExeSha256, target.Length, target.Fingerprint))

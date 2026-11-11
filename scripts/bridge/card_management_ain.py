@@ -7,6 +7,37 @@ CARD_STRINGS = {
     "CP932": ("カードデータ", "Id", "識別名", "種別", "テストキャラ", "テストアイテム"),
 }
 PLAYER_CARDS, CHARACTERS = 0x103, 0x101
+CARD_SCENE_SCOPE, CARD_READY = 12, 13
+CARD_SCENES = (
+    ("Battle", 0x3FF994, "CALLFUNC", 0x6711),
+    ("BattleResult", 0x3FFA7C, "CALLFUNC", 0x6711),
+    ("SimpleBattle", 0x3FFD8E, "CALLFUNC", 0x670B),
+    ("SimpleBattleResult", 0x3FFE14, "CALLMETHOD", 0),
+    ("CardReward", 0x4097B0, "CALLFUNC", 0x6711),
+)
+
+
+def install_card_scene_guards(add_function, replace_code, instruction, relocate):
+    def scope(asm, delta):
+        for value in (CARD_SCENE_SCOPE, delta, 0):
+            asm.emit("PUSH", value)
+        asm.emit("CALLHLL", 36, 6, -1)
+        asm.emit("POP")
+
+    for scene, source_pc, call, operand in CARD_SCENES:
+        pc = relocate(source_pc)
+        original = instruction(call, operand)
+
+        def body(asm):
+            scope(asm, 1)
+            asm.emit(call, operand)
+            scope(asm, -1)
+            asm.emit("JUMP", pc + len(original))
+
+        name = f"R10Bridge_CardScene{scene}"
+        function = add_function(name, 0, [], body)
+        # Jump into the continuation with the original call arguments still on the stack.
+        replace_code(pc, original, instruction("JUMP", add_function.entries[function]), name)
 
 
 def install_card_management(add_function, section, encoding):
@@ -83,16 +114,15 @@ def install_card_management(add_function, section, encoding):
         def is_kind(command, otherwise):
             value(local(kind)); asm.emit("PUSH", command); asm.emit("EQUALE"); asm.emit("IFZ", otherwise)
 
-        # Avoid an incomplete save, combat, a reward awaiting selection, or a generator callback.
+        # Scene lifetime is tracked by the bridge. The game retains the previous battle context.
         for index in (0xFE, PLAYER_CARDS, CHARACTERS):
             asm.global_ref(index); asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "unavailable")
         asm.global_get(0xFE, 0x660A); asm.emit("IFZ", "unavailable")
-        asm.global_ref(0x124); asm.emit("PUSH", -1); asm.emit("NOTE"); asm.emit("IFNZ", "unavailable")
         asm.global_ref(PLAYER_CARDS); asm.emit("PUSH", 1); asm.emit("REF")
         asm.emit("CALLHLL", 5, 19, 13); asm.emit("IFZ", "unavailable")  # Array.Empty(m_stock)
         asm.global_ref(0x132); asm.emit("CALLHLL", 11, 3, -1); asm.emit("IFZ", "unavailable")
-        native(0, 1, discard=True); asm.emit("JUMP", "claim")
-        asm.label("unavailable"); native(0, discard=True)
+        native(CARD_READY, 1, discard=True); asm.emit("JUMP", "claim")
+        asm.label("unavailable"); native(CARD_READY, discard=True)
         asm.label("claim")
         assign(kind, lambda: native(1)); value(local(kind)); asm.emit("IFZ", "return")
         assign(row, lambda: native(2))
