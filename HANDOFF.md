@@ -4,11 +4,11 @@
 
 | 项目 | 当前配置 |
 |---|---|
-| 开发版本 | v0.8.0 基线与未发布修复，C# / .NET 10 / WPF，`win-x86` |
+| 开发版本 | v0.8.1，C# / .NET 10 / WPF，`win-x86` |
 | 游戏版本 | 六种中文补丁、中文原版和日文原版，文件指纹见 [README](README.md#支持范围与限制) |
 | 源码 | 开发分支 `codex/component-optimizations`，默认分支 `codex/initial-import`。[私有仓库 R10Trainer](https://github.com/Misakura-R1n/R10Trainer) |
 | 最近发布 | 玩家包 `R10Trainer-v0.6.3-win-x86.zip`。[v0.6.3](https://github.com/Misakura-R1n/R10Trainer/releases/tag/v0.6.3) |
-| 本地构建产物 | `artifacts/R10Trainer-v0.8.0-win-x86/` 及同名 ZIP |
+| 本地构建产物 | `artifacts/R10Trainer-v0.8.1-win-x86/` 及同名 ZIP |
 | 构建身份 | 包内 `build-info.json` 记录版本、源码提交、工作树状态和八种配方指纹 |
 
 安装、升级和构建参数见 [README](README.md)。协作规则见 [AGENTS.md](AGENTS.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
@@ -53,10 +53,10 @@
 
 | 层级 | 本地证据 |
 |---|---|
-| 回滚保护回归 | `artifacts/data-rollback-reselect-build.log`。模拟回滚冲突、同进程重选、存活状态查询失败、切换进程和重启后 PID 复用。 |
-| 0.8.0 多版本离线与临时文件安装恢复 | `artifacts/bridge/v0.8.0-compatibility-build.log`，各版的 AIN 校验产物见 `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/`。覆盖八份脚本及 EXE／AIN 错配拒绝。 |
-| 0.8.0 协议与 x86 辅助进程 | 同一日志记录中文 CP936 与日文 CP932 卡名、两项重抽规则的开关归属及原生回归。安装测试的符号链接用例因 Windows 权限不足跳过。 |
-| 0.8.0 本地玩家包 | `artifacts/bridge/v0.8.0-package-build.log`，包内各配方身份见 `build-info.json`。 |
+| 0.8.1 本地玩家包 | `artifacts/bridge/v0.8.1-package-build.log`，包内各配方身份见 `build-info.json`。 |
+| 回滚保护回归 | 构建日志中的 `unified unresolved data rollback survives reselect`。模拟回滚冲突、同进程重选、存活状态查询失败、切换进程和重启后 PID 复用。 |
+| 多版本离线与临时文件安装恢复 | 各版的 AIN 校验产物见 `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/`。构建日志覆盖八份脚本及 EXE／AIN 错配拒绝。 |
+| 协议与 x86 辅助进程 | 构建日志记录中文 CP936 与日文 CP932 卡名、两项重抽规则的开关归属及原生回归。安装测试的符号链接用例因 Windows 权限不足跳过。 |
 | 0.7.0 模拟与离线检查 | `artifacts/live/battle-features-validation.log`。覆盖功能路由、HP 草稿失效、数值边界、AIN 插桩和安装恢复。符号链接用例因 Windows 权限不足跳过。 |
 | 0.7.0 x86 辅助进程 | 同一日志记录两个配置各 118 项原生检查。HP 执行途中退出战斗后，旧命令会被拒绝，后续命令仍可进入队列。 |
 | 0.7.0 界面演示 | `artifacts/live/battle-features-gameplay.jsonl` 的 `demo-wpf-*` 条目。覆盖战斗页控件、滚动、AP 读数和 HP 上限提示。 |
@@ -70,7 +70,7 @@
 | 0.6.2 卡片资格、获取及存读档 | `artifacts/live/card-access-live.jsonl`、`artifacts/live/card-access-mcp.jsonl` |
 | 0.6.0 版本区分、共享 ★、读档保护和原文件校验 | `artifacts/live/card-management-live.jsonl`、`artifacts/live/card-management-mcp.jsonl`、`artifacts/live/card-management-isolation.json` |
 
-0.8.0 仅执行离线、辅助进程和临时文件验证。新增版本待用各自的隔离存档核对游戏启动、进程连接、战斗写入和卡表读取。
+0.8.1 的验证范围为离线、辅助进程和临时文件。0.8.0 新增的游戏版本待用各自的隔离存档核对游戏启动、进程连接、战斗写入和卡表读取。
 
 0.7.0 隔离实机确认了双方 HP 写入至 1 和当前上限、AP 耗尽后补满、同回合连发、原生限次技能再次施放以及结算后停用 HP 编辑。三个越界输入的实机记录为辅助进程超时，明确拒绝及是否存在迟到写入待确认。附加测试 AIN 覆盖 AP 上限 10、中毒、睡眠、眩晕、石化与单次行动上限，使用的 DLL 指纹记录在 `battle-features-integrity.json`。HP 写入触发场景退出时的队列清理有 x86 回归，最终组件的实机复测待完成。
 
