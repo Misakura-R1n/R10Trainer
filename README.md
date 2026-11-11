@@ -165,3 +165,7 @@ codex mcp add r10-bridge -- "$PWD\artifacts\R10Developer-controls\mcp\R10.Mcp.ex
 | `src/R10.Mcp` | 开发调试接口 |
 
 功能定义位于 `src/R10.Core/Contracts.cs`。组件功能需同步维护能力、协议、关闭恢复和对应测试，AIN 变更还需更新版本指纹和配方。游戏语义、布局与字节资料参照 Hanny 提交 `82b06b1e283a80ce98aa1a1fe1796d8a2280f8af`。
+
+## 许可证
+
+本项目原创代码与文档采用 [MIT 许可证](LICENSE)。游戏图标及其他第三方素材适用各自的授权条款。发布包中的 .NET 运行时许可和第三方声明见包内 `licenses/`。

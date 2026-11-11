@@ -154,6 +154,7 @@ try {
         $metadata = [ordered]@{ version=$version; builtAtUtc=[DateTime]::UtcNow.ToString('o'); commit=$head; dirty=[bool](& git status --porcelain); rid='win-x86'; bridgeIncluded=$true; bridge=$bridgeIdentity; mcpIncluded=$false; validation='automated + independent x86 helper; this script does not run real-game tests; see README for separately recorded live checks'; sources=$sourceHashes }
         $metadata | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$publishDirectory/build-info.json" -Encoding utf8
         Copy-Item -LiteralPath README.md -Destination "$publishDirectory/README.md" -Force
+        Copy-Item -LiteralPath LICENSE -Destination "$publishDirectory/LICENSE" -Force
         $gameFiles = @(Get-ChildItem -LiteralPath $publishDirectory -Recurse -File | Where-Object { $_.Extension -in @('.ain', '.afa', '.asd', '.vsf', '.qnt') -or $_.Name -in @('Rance10.exe', 'AliceStart.ini', 'R10.Mcp.exe', 'R10.Mcp.dll', 'settings.json') })
         if ($gameFiles.Count -ne 0) { throw 'Publish directory contains game data or saves; refusing to create a package.' }
         Compress-Archive -LiteralPath $publishDirectory -DestinationPath "$publishDirectory.zip" -Force
