@@ -1,6 +1,11 @@
 namespace R10.Core;
 
-public enum FeatureId { Hp, EnemyKill, EnemyNear, Difficulty, Turn, DeathRate, Army, War, Food, Medal, Friendship, Resources, Treasure, Unit, Star, Redraw, Redistribute, NoDuplicateCards }
+public enum FeatureId
+{
+    Hp, EnemyKill, EnemyNear, Difficulty, Turn, DeathRate, Army, War, Food, Medal, Friendship,
+    Resources, Treasure, Unit, Star, Redraw, Redistribute, NoDuplicateCards,
+    PlayerHp, EnemyHp, ApFull, UnlimitedSkills, StatusImmunity, RepeatActions, UnlimitedActions
+}
 public enum FeatureKind { Toggle, Number, Choice }
 public enum FeatureGroup { Battle, Strategy, Resources, Growth }
 public enum ConnectionState { Searching, Unsupported, Loading, Ready, RestorePending, Error, Closed }
@@ -10,6 +15,13 @@ public static class FeatureCatalog
 {
     public static IReadOnlyList<FeatureDefinition> All { get; } = Array.AsReadOnly(new[] {
         new FeatureDefinition(FeatureId.Hp, "HP 不减", FeatureGroup.Battle, FeatureKind.Toggle, Help:"定时将我方 HP 恢复至上限，无法保证抵挡瞬间致死伤害。"),
+        new FeatureDefinition(FeatureId.PlayerHp, "我方 HP", FeatureGroup.Battle, FeatureKind.Number, 1, int.MaxValue, Help:"设置本场战斗的当前 HP。HP 保护继续处理后续伤害。"),
+        new FeatureDefinition(FeatureId.EnemyHp, "敌方 HP", FeatureGroup.Battle, FeatureKind.Number, 1, int.MaxValue, Help:"设置本场战斗的当前 HP。开启敌人濒死或直死时暂停手动编辑。"),
+        new FeatureDefinition(FeatureId.ApFull, "AP 全满", FeatureGroup.Battle, FeatureKind.Toggle, Help:"按队伍当前 AP 上限补满。技能正常扣费，在回合开始和技能结算后补满。"),
+        new FeatureDefinition(FeatureId.UnlimitedSkills, "限次技能不限次", FeatureGroup.Battle, FeatureKind.Toggle, Help:"允许已用尽次数的技能继续使用，按游戏规则结算 AP。重新展开技能列表可刷新费用显示。"),
+        new FeatureDefinition(FeatureId.StatusImmunity, "我方异常免疫", FeatureGroup.Battle, FeatureKind.Toggle, Help:"解除并阻止我方普通战斗的负面状态，包括角色的眩晕与石化。"),
+        new FeatureDefinition(FeatureId.RepeatActions, "同回合重复行动", FeatureGroup.Battle, FeatureKind.Toggle, Help:"同回合可再次点击已行动的角色选择技能。卡面可能仍显示行动结束。"),
+        new FeatureDefinition(FeatureId.UnlimitedActions, "解除我方行动次数上限", FeatureGroup.Battle, FeatureKind.Toggle, Help:"解除普通战斗中对我方施加的全队行动次数上限。"),
         new FeatureDefinition(FeatureId.EnemyKill, "敌人直死", FeatureGroup.Battle, FeatureKind.Toggle),
         new FeatureDefinition(FeatureId.EnemyNear, "敌人濒死", FeatureGroup.Battle, FeatureKind.Toggle),
         new FeatureDefinition(FeatureId.Difficulty, "难度", FeatureGroup.Battle, FeatureKind.Number, -9999, 9999),
@@ -29,6 +41,9 @@ public static class FeatureCatalog
         new FeatureDefinition(FeatureId.Redistribute, "自动战斗重配", FeatureGroup.Growth, FeatureKind.Toggle, Help:"允许多次重新分配。实机效果待验证。")
     });
     public static FeatureDefinition Get(FeatureId id) => All.First(x => x.Id == id);
+    public static bool IsBattleHp(FeatureId id) => id is FeatureId.PlayerHp or FeatureId.EnemyHp;
+    internal static bool RequiresBattleComponent(FeatureId id) => IsBattleHp(id) ||
+        id is FeatureId.ApFull or FeatureId.UnlimitedSkills or FeatureId.StatusImmunity or FeatureId.RepeatActions or FeatureId.UnlimitedActions;
     public static bool ValidValue(FeatureId id, decimal value)
     {
         var f = Get(id);
@@ -38,7 +53,7 @@ public static class FeatureCatalog
 }
 public sealed record FeatureObservation(decimal? Value = null, bool Requested = false, bool Active = false,
     bool CanEdit = false, bool LockRequested = false, bool LockActive = false, string? Error = null, string? Detail = null,
-    string? Help = null, string? ActiveDescription = null);
+    string? Help = null, string? ActiveDescription = null, decimal? Maximum = null);
 public sealed record TrainerSnapshot(ConnectionState Connection, string Status, int? ProcessId,
     bool IsSimulation, IReadOnlyDictionary<FeatureId, FeatureObservation> Features, string? Error = null,
     string RuntimeMode = "memory", string? Notice = null)
@@ -46,10 +61,12 @@ public sealed record TrainerSnapshot(ConnectionState Connection, string Status, 
     public GameLoadEpoch? LoadEpoch { get; init; }
     public bool CardManagementAvailable { get; init; }
     public int CardContext { get; init; }
+    public BattleEditContext? Battle { get; init; }
     public static TrainerSnapshot Empty { get; } = new(ConnectionState.Searching, "等待游戏连接", null, false,
         FeatureCatalog.All.ToDictionary(x => x.Id, _ => new FeatureObservation()));
 }
 public sealed record GameLoadEpoch(int ProcessId, string Session, long Generation, bool Ready);
+public sealed record BattleEditContext(GameLoadEpoch Epoch, int Id);
 public interface IGameLoadObserver { void ObserveGameLoad(GameLoadEpoch? epoch); }
 public sealed record OperationResult(bool Success, string? Error = null)
 {
@@ -65,6 +82,8 @@ public interface ITrainerRuntime
     // A delayed confirmation must carry its original authority to the execution boundary.
     Task<OperationResult> SetValueForEpochAsync(FeatureId id, decimal value, GameLoadEpoch expected) =>
         Task.FromResult(OperationResult.Fail("此连接不支持绑定读档状态的确认操作。"));
+    Task<OperationResult> SetBattleHpAsync(FeatureId id, decimal value, BattleEditContext expected) =>
+        Task.FromResult(OperationResult.Fail("此连接不支持战斗 HP 编辑。"));
     Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled);
     Task<OperationResult> SetLockAsync(FeatureId id, bool enabled);
     Task<OperationResult> TryCloseAsync();

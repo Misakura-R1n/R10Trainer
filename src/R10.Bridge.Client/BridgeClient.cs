@@ -37,7 +37,12 @@ public sealed class BridgeClient : IBridgeClient
             NullableNonnegativeInteger(response, "loadKind"), NullableInteger(response, "loadSlot"),
             NullableNonnegativeInteger(response, "lastCompletedGeneration"), NullableNonnegativeInteger(response, "lastLoadOutcome"))
         { ResourcesFull = response.TryGetProperty("resourcesFull", out var full) && full.ValueKind == JsonValueKind.True, DataReady = response.TryGetProperty("dataReady", out var data) && data.ValueKind == JsonValueKind.True, Food=NullableInteger(response,"food"), Medal=NullableInteger(response,"medal"), Friendship=NullableInteger(response,"friendship"), Unit=NullableInteger(response,"unit"), FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True,
-            CardContext = response.TryGetProperty("cardContext", out _) ? BoundedInteger(response, "cardContext", int.MaxValue) : 0 };
+            CardContext = response.TryGetProperty("cardContext", out _) ? BoundedInteger(response, "cardContext", int.MaxValue) : 0,
+            OrdinaryBattle = response.TryGetProperty("ordinaryBattle", out _) && Boolean(response, "ordinaryBattle"),
+            BattleContext = response.TryGetProperty("battleContext", out _) ? BoundedInteger(response, "battleContext", int.MaxValue) : 0,
+            BattleRules = response.TryGetProperty("battleRules", out _) ? (BattleRules)BoundedInteger(response, "battleRules", int.MaxValue) : BattleRules.None,
+            Ap = NullableNonnegativeInteger(response, "ap"), ApMax = NullableNonnegativeInteger(response, "apMax"),
+            EnemyHpMax = NullableNonnegativeInteger(response, "enemyHpMax") };
     }
 
     public static bool ValidDataValue(string feature, int value) => feature switch
@@ -54,6 +59,17 @@ public sealed class BridgeClient : IBridgeClient
         var response=await ExchangeAsync(new { op="set_value", feature, value, generation },true,cancellationToken).ConfigureAwait(false);
         try { return ParseCommand(response); }
         catch (BridgeException error) { throw new BridgeException(error.Code,error.Message,true,error); }
+    }
+
+    public async Task<BridgeCommand> SetBattleHpForSessionAsync(string session, long generation, int context, int side, int value, CancellationToken cancellationToken = default)
+    {
+        ValidateSession(session);
+        if (generation < 0 || context <= 0 || side is < 0 or > 1 || value < 1)
+            throw new BridgeException("invalid_battle_hp", "Battle HP requires a current battle, a valid side and a positive value.");
+        var response = await ExchangeAsync(new { op = "set_battle_hp", generation, context, argument = side, value },
+            true, cancellationToken).ConfigureAwait(false);
+        try { return ParseCommand(response); }
+        catch (BridgeException error) { throw new BridgeException(error.Code, error.Message, true, error); }
     }
 
     public async Task<BridgeCommand> ActionForSessionAsync(string session, int action, int argument, int argument2, long generation, CancellationToken cancellationToken = default)
@@ -85,7 +101,9 @@ public sealed class BridgeClient : IBridgeClient
 
     public async Task<BridgeCommand> SetFeatureAsync(string feature, bool enabled, long generation, CancellationToken cancellationToken = default)
     {
-        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute" or "resources_full")) throw new BridgeException("unsupported_feature", "Unsupported bridge feature.");
+        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute" or "resources_full"
+            or "ap_full" or "unlimited_skills" or "status_immunity" or "repeat_actions" or "unlimited_actions"))
+            throw new BridgeException("unsupported_feature", "Unsupported bridge feature.");
         if (generation < 0) throw new ArgumentOutOfRangeException(nameof(generation));
         var response = await ExchangeAsync(new { op = "set_feature", feature, enabled, generation }, true, cancellationToken).ConfigureAwait(false);
         try { return ParseCommand(response); }

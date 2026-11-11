@@ -8,6 +8,7 @@
             <Button Style="{StaticResource GhostButton}" Width="21" MinHeight="24" Padding="3" Margin="3,0,0,0" Visibility="{Binding HasHelp,Converter={StaticResource BoolVisibility}}" Command="{Binding HelpCommand}" AutomationProperties.AutomationId="{Binding Id,StringFormat=Help.{0}}" AutomationProperties.Name="{Binding Label,StringFormat={}{0}说明}"><TextBlock Style="{StaticResource Icon}" FontSize="12" Foreground="{DynamicResource MutedBrush}" Text="&#xE946;"/></Button>
           </StackPanel>
           <TextBlock Text="{Binding StateText}" Style="{StaticResource MutedText}" FontSize="11" Margin="0,2,0,0" Visibility="{Binding HasState,Converter={StaticResource BoolVisibility}}" ToolTip="{Binding StateDescription}"/>
+          <TextBlock Text="{Binding CurrentReading}" Style="{StaticResource MutedText}" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" Visibility="{Binding CurrentReading,Converter={StaticResource TextVisibility}}" ToolTip="{Binding StateDescription}"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <ToggleButton Style="{StaticResource Switch}" IsChecked="{Binding Requested,Mode=OneWay}" Command="{Binding ToggleCommand}" IsEnabled="{Binding CanToggle}" Visibility="{Binding IsToggle,Converter={StaticResource BoolVisibility}}" AutomationProperties.Name="{Binding Label}" AutomationProperties.AutomationId="{Binding Id,StringFormat=Toggle.{0}}"/>

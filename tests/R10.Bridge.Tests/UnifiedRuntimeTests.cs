@@ -7,6 +7,29 @@ static class UnifiedRuntimeTests
     private static readonly string DirectoryB = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "R10-unified-fixture-b"));
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("unified battle edits use the bridge and respect enemy HP overrides", async () =>
+        {
+            var battle = new BattleEditContext(new(42, "fixture:original", 3, true), 7);
+            var memory = new Fixture();
+            var bridge = new Fixture { Current = Snapshot() with { Battle = battle } };
+            var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
+            foreach (var id in new[] { FeatureId.ApFull, FeatureId.UnlimitedSkills, FeatureId.StatusImmunity,
+                         FeatureId.RepeatActions, FeatureId.UnlimitedActions })
+                Check((await runtime.SetToggleAsync(id, true)).Success);
+            Check(runtime.Current.Battle == battle && (await runtime.SetBattleHpAsync(FeatureId.EnemyHp, 80, battle)).Success);
+            Check(bridge.BattleWrite == (battle, 80m) && memory.Writes.Count == 0 && bridge.Writes.Count == 5);
+            foreach (var overrideId in new[] { FeatureId.EnemyKill, FeatureId.EnemyNear })
+            {
+                var state = Snapshot();
+                var features = state.Features.ToDictionary(item => item.Key, item => item.Value);
+                features[overrideId] = features[overrideId] with { Requested = true };
+                memory.Publish(state with { Features = features });
+                Check(!runtime.Current.Features[FeatureId.EnemyHp].CanEdit &&
+                    !(await runtime.SetBattleHpAsync(FeatureId.EnemyHp, 70, battle)).Success &&
+                    bridge.BattleWrite == (battle, 80m));
+            }
+            Check((await runtime.TryCloseAsync()).Success);
+        });
         await test("unified exposes bridge epoch and preserves confirmation token to selected runtime", async () =>
         {
             var epoch=new GameLoadEpoch(42,"fixture:original",3,true);
@@ -175,6 +198,13 @@ static class UnifiedRuntimeTests
         public event Action<TrainerSnapshot>? SnapshotChanged;
         public List<string> Writes { get; } = [];
         public GameLoadEpoch? Expected;
+        public (BattleEditContext, decimal)? BattleWrite;
+        public Task<OperationResult> SetBattleHpAsync(FeatureId id, decimal value, BattleEditContext expected)
+        {
+            if (Current.Battle != expected) return Task.FromResult(OperationResult.Fail("battle changed"));
+            BattleWrite = (expected, value);
+            return Task.FromResult(OperationResult.Ok);
+        }
         public Task<OperationResult> SetValueForEpochAsync(FeatureId id, decimal value, GameLoadEpoch expected)
         {
             Expected=expected;

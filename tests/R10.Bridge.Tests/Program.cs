@@ -62,6 +62,18 @@ await Test("typed values validate bounds and bind exact session and generation",
         Check((await Error(()=>client.SetValueForSessionAsync("42:123",feature,value,3))).Code=="invalid_value");
     Check(transport.Requests.Count==1);
 });
+await Test("battle HP carries the observed context, side and generation", async () =>
+{
+    var transport = new FixtureTransport(_ => Ok(new { id = 8, state = "queued" }), "42:123");
+    var client = new BridgeClient(42, transport);
+    await client.SetBattleHpForSessionAsync("42:123", 3, 24, 1, 500);
+    var sent = transport.Requests.Single();
+    Check(sent.GetProperty("op").GetString() == "set_battle_hp" && sent.GetProperty("generation").GetInt32() == 3 &&
+        sent.GetProperty("context").GetInt32() == 24 && sent.GetProperty("argument").GetInt32() == 1 && sent.GetProperty("value").GetInt32() == 500);
+    Check((await Error(() => client.SetBattleHpForSessionAsync("42:123", 3, 24, 1, 0))).Code == "invalid_battle_hp");
+    Check((await Error(() => client.SetBattleHpForSessionAsync("42:other", 3, 24, 0, 200))).Code == "session_changed");
+    Check(transport.Requests.Count == 1);
+});
 await Test("unsupported feature never reaches transport", async () =>
 {
     var transport = new FixtureTransport(_ => State());

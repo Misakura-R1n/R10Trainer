@@ -9,6 +9,7 @@ public sealed class FeatureViewModel : ObservableObject
     private readonly Action<string> _status;
     private readonly Func<decimal, Task<bool>> _confirmStar;
     private FeatureObservation _observation = new();
+    private BattleEditContext? _battle;
     private string _draft = "";
     private string? _operationError;
     private bool _dirty, _editing, _busy, _helpOpen, _canCancel;
@@ -53,6 +54,16 @@ public sealed class FeatureViewModel : ObservableObject
         }
     }
     public string ValueDescription => _observation.Value is null ? _observation.Detail ?? "当前值未知" : "当前值：" + Format(_observation.Value.Value) + Unit;
+    public string? CurrentReading
+    {
+        get
+        {
+            var reading = _observation.Value is { } value && _observation.Maximum is { } max
+                ? $"{Format(value)} / {Format(max)}" : null;
+            if (!FeatureCatalog.IsBattleHp(Id) || _observation.CanEdit || _observation.Detail is not { } detail) return reading;
+            return reading is null ? detail : $"{reading} · {detail}";
+        }
+    }
     public AsyncCommand ToggleCommand { get; }
     public AsyncCommand LockCommand { get; }
     public AsyncCommand ApplyCommand { get; }
@@ -65,8 +76,15 @@ public sealed class FeatureViewModel : ObservableObject
         ApplyCommand = new AsyncCommand(ApplyAsync, () => CanEdit);
         HelpCommand = new RelayCommand(() => HelpOpen = !HelpOpen);
     }
-    public void Update(FeatureObservation observation, bool canCancel)
+    public void Update(FeatureObservation observation, bool canCancel, BattleEditContext? battle = null)
     {
+        if (FeatureCatalog.IsBattleHp(Id) && _battle != battle)
+        {
+            if (_dirty) _operationError = "战斗目标已变化，请重新输入。";
+            _dirty = false;
+            _editing = false;
+            _battle = battle;
+        }
         if (IsToggle && _observation.Error is not null && observation.Error is null && observation.Requested == observation.Active)
             _operationError = null;
         _observation = observation; _canCancel = canCancel;
@@ -75,7 +93,7 @@ public sealed class FeatureViewModel : ObservableObject
     }
     public void ResetForSession()
     {
-        _dirty = false; _editing = false; _draft = ""; _operationError = null;
+        _dirty = false; _editing = false; _draft = ""; _operationError = null; _battle = null;
         Changed(nameof(Draft)); RefreshState();
     }
     public void SetEditing(bool editing) => _editing = editing;
@@ -92,10 +110,19 @@ public sealed class FeatureViewModel : ObservableObject
         if (IsChoice) value = StarTarget;
         else if (!decimal.TryParse(Draft, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out value))
         { _operationError = "请输入有效数值。"; RefreshState(); return; }
-        if (!FeatureCatalog.ValidValue(Id, value))
+        if (!FeatureCatalog.ValidValue(Id, value) || value > _observation.Maximum)
         {
-            _operationError = IsChoice ? "请选择 10、40、80 或 200。" : $"请输入 {Definition.Minimum}～{Definition.Maximum}，步长 {Definition.Step}。";
+            _operationError = IsChoice ? "请选择 10、40、80 或 200。" : $"请输入 {Definition.Minimum}～{_observation.Maximum ?? Definition.Maximum}，步长 {Definition.Step}。";
             RefreshState(); return;
+        }
+        if (FeatureCatalog.IsBattleHp(Id))
+        {
+            var battle = _battle;
+            if (battle is null || battle != _runtime.Current.Battle)
+            { _operationError = "战斗目标已变化，请重新输入。"; RefreshState(); return; }
+            if (await RunAsync(() => _runtime.SetBattleHpAsync(Id, value, battle)) && battle == _battle)
+            { _dirty = false; _draft = Format(value); Changed(nameof(Draft)); }
+            return;
         }
         GameLoadEpoch? expected = null;
         if (IsChoice)
@@ -128,7 +155,7 @@ public sealed class FeatureViewModel : ObservableObject
     }
     private void RefreshState()
     {
-        foreach (var property in new[] { nameof(Requested), nameof(LockRequested), nameof(LockGlyph), nameof(CanEdit), nameof(CanToggle), nameof(CanLock), nameof(Error), nameof(HasError), nameof(HasState), nameof(StateText), nameof(StateDescription), nameof(ValueDescription), nameof(Help), nameof(HasHelp) }) Changed(property);
+        foreach (var property in new[] { nameof(Requested), nameof(LockRequested), nameof(LockGlyph), nameof(CanEdit), nameof(CanToggle), nameof(CanLock), nameof(Error), nameof(HasError), nameof(HasState), nameof(StateText), nameof(StateDescription), nameof(ValueDescription), nameof(CurrentReading), nameof(Help), nameof(HasHelp) }) Changed(property);
         ToggleCommand?.Refresh(); LockCommand?.Refresh(); ApplyCommand?.Refresh();
     }
 }

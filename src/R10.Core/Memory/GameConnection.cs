@@ -12,13 +12,14 @@ public sealed class GameConnection : IDisposable
     public const string SupportedAinHash = "7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A";
     // The installer recompresses the exact same AI2 payload with the bundled .NET runtime.
     // Its compressed bytes may differ from Python/zlib, but no script byte may differ.
-    public const string SupportedBridgeAinPlainHash = "6016DF12F4F8C47C596AF8A7951C6149201768CF3996CA0C49D1E13D2FE12D4A";
+    public const string SupportedBridgeAinPlainHash = "E8A93169E06209E422BF52E37C9D08B69EDB1D0D8013DACEEA513C50DBE6DF5B";
     public const string SupportedBridgeAinFingerprint = "bridge-v1:" + SupportedBridgeAinPlainHash;
-    public const int SupportedBridgeAinPlainLength = 28727376;
-    public const uint SupportedBridgeCodeLength = 14579760;
+    public const int SupportedBridgeAinPlainLength = 28730540;
+    public const uint SupportedBridgeCodeLength = 14582408;
     private static readonly (int Length, string Fingerprint)[] BridgeAinIdentities =
     [
         (SupportedBridgeAinPlainLength, SupportedBridgeAinFingerprint),
+        (28727376, "bridge-v1:6016DF12F4F8C47C596AF8A7951C6149201768CF3996CA0C49D1E13D2FE12D4A"),
         (28727376, "bridge-v1:6FDB129167C8FAD210168D3E6EFF8D398001AE397D84D535A741CF961047A06F"),
         (28727422, "bridge-v1:C0989948D8B10CCDFC5638A77FEF3E44B0F100AA92C609915F5DE361BB7007EC"),
         (28724545, "bridge-v1:7C674704D331F697339643A541958B259B8B7179D72346CA9C573F5A4B5829AF")

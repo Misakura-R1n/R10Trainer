@@ -7,6 +7,7 @@ import unittest
 import zlib
 
 import build_instrumented_ain as builder
+from battle_ain import AP_FULL, REPEAT_ACTIONS, STATUS_IMMUNITY, UNLIMITED_ACTIONS, UNLIMITED_SKILLS
 
 SOURCE: Path
 
@@ -45,8 +46,11 @@ class WrapperVm:
             self.events.append(("init", function)); return None
         raise AssertionError(f"Unexpected method {function:x}")
 
-    def run(self, function, arguments, this):
-        pc, stack = function["entry"], []
+    def battle(self, op, a, b):
+        return 0
+
+    def run(self, function, arguments, this, stack_values=()):
+        pc, stack = function["entry"], list(stack_values)
         for _ in range(500):
             op = struct.unpack_from("<H", self.code, pc)[0]
             size = self.WIDTHS.get(op, 0)
@@ -60,6 +64,10 @@ class WrapperVm:
                 stack.append(arguments[index] if page == "local" else self.globals[index] if page == "global" else self.objects[page][index])
             elif op == 4: stack.append("global")
             elif op == 5: stack.append("local")
+            elif op == 9: stack.append(stack.pop() + stack.pop())
+            elif op == 0x13:
+                right, left = stack.pop(), stack.pop()
+                stack.append(int(left < right))
             elif op == 0x5B: stack.append(this)
             elif op == 0x18: stack.append(int(stack.pop() == stack.pop()))
             elif op in (0x2D, 0x2E):
@@ -78,6 +86,8 @@ class WrapperVm:
                     self.events.append(("tick", *values)); stack.append(0)
                 elif args[1] == 2:
                     stack.append(self.control(*values))
+                elif args[1] == 7:
+                    stack.append(self.battle(*values))
                 else:
                     assert args[1] == 1
                     side, old, wanted = values
@@ -111,6 +121,7 @@ class WrapperVm:
                 if function["returnType"]:
                     assert len(stack) == 1; return stack.pop()
                 assert not stack; return None
+            elif op == 0x7A: stack.append(stack[-1])
             else: raise AssertionError(f"Unexpected opcode {op:x} at {pc:x}")
         raise AssertionError("Wrapper did not terminate")
 
@@ -120,9 +131,27 @@ class ControlVm(WrapperVm):
         super().__init__(generated, report)
         self.action, self.arg, self.arg2 = 0, 1, 0
         self.active = self.enabled = self.usable = self.exists = True
-        self.objects[100].update({17: 500, 18: 501})
+        self.objects[100].update({17: 500, 18: 501, 20: 400})
         self.objects[200][1] = 600; self.objects[600] = {0: 601}
         self.objects[601] = {1: 602}; self.objects[602] = {0: "card-id"}
+        self.globals[0x100] = 101
+        self.objects.update({400: {3: 410, 14: 420}, 410: {0: 430, 1: 440},
+                             430: {0: 0, 11: 450}, 440: {0: 1, 11: 460},
+                             450: {0: 0}, 460: {0: 1}})
+        self.rules, self.ap, self.ap_max, self.statuses = 0, 3, 6, []
+        self.refresh, self.hp_side, self.hp_value = False, 0, 0
+        self.ordinary = True
+
+    def battle(self, op, a, b):
+        if op == 0: return int(self.ordinary and b == 400 and (not a or self.rules & a))
+        if op == 3: self.events.append(("ap", a, b)); return 0
+        if op == 4: return self.hp_side
+        if op == 5: return self.hp_value
+        if op == 6:
+            self.events.append(("hp_result", a)); self.hp_side = 0
+            return 0
+        if op == 8: return int(self.refresh)
+        raise AssertionError(op)
 
     def control(self, op, a, b):
         if op == 0: return self.action
@@ -139,6 +168,15 @@ class ControlVm(WrapperVm):
         if function == 0x73DF: return int(self.active)
         if function == 0x6141: self.events.append(("skill_click", obj, *args)); return None
         if function == 0x6136: self.events.append(("end_turn", obj)); return None
+        if function == 0x67B7: return self.ap
+        if function == 0x66A6: return self.ap_max
+        if function == 0x67B9:
+            self.ap = args[0]; self.events.append(("set_ap", self.ap)); return None
+        if function == 0x6254: self.events.append(("refresh_selector",)); return None
+        if function == 0x6813: return 1000 if obj == 430 else 500
+        if function == 0x681B: self.events.append(("clear_leaders", args[0])); return 0
+        if function == 0x68FE: return len(self.statuses)
+        if function == 0x68F8: self.events.append(("erase", self.statuses.pop(args[0]))); return None
         return super().method(obj, function, args)
 
 
@@ -154,7 +192,7 @@ class ControlBuildTests(unittest.TestCase):
     def test_skill_arguments_survive_command_consumption(self):
         vm = self.vm(4); vm.arg2 = 1
         vm.invoke("SceneBattle@R10BridgeUpdate", (16,16))
-        self.assertEqual(vm.events, [("ready",1),("usable",1,1),("ack",1),("skill_click",100,"card-id",1)])
+        self.assertEqual(vm.events, [("ready",1),("ap",3,6),("usable",1,1),("ack",1),("skill_click",100,"card-id",1)])
 
     def test_skill_unavailable_does_not_call_handler(self):
         vm = self.vm(4); vm.usable = False
@@ -170,7 +208,7 @@ class ControlBuildTests(unittest.TestCase):
 
     def test_end_turn_acknowledged_before_original_handler(self):
         vm = self.vm(3); vm.invoke("SceneBattle@R10BridgeUpdate", (16,16))
-        self.assertEqual(vm.events, [("ready",1),("ack",1),("end_turn",100)])
+        self.assertEqual(vm.events, [("ready",1),("ap",3,6),("ack",1),("end_turn",100)])
 
     def test_load_checks_existence_and_retains_slot_across_ack(self):
         vm = self.vm(2); vm.arg = 5005; vm.invoke("R10Bridge_ControlPump")
@@ -315,10 +353,10 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(vm.events, [("tick", 4, 2, 0)])
 
     def test_startup_capabilities_match_full_profile(self):
-        self.assertEqual(self.report["capabilities"], 1007)
+        self.assertEqual(self.report["capabilities"], 2031)
         startup = next(h for h in self.report["hooks"] if h["id"] == 0x47DD)
         prefix = bytes.fromhex(startup["prefixHex"])
-        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 1007))
+        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 2031))
 
     def test_card_management_uses_typed_locals_and_integer_native_abi(self):
         pump = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardManagement")
@@ -335,9 +373,78 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual([t[0] for t in record["types"]], [10] * 8 + [12] * 2)
         hll_start = 0x1AE658A + (func_end - 0x1395C28)
         hll_end = 0x1AFA1BD + len(plain) - builder.SECTION_BOUNDS[-1][2]
-        export = builder.read_libraries(plain[hll_start:hll_end])[-1]["functions"][-1]
+        exports = builder.read_libraries(plain[hll_start:hll_end])[-1]["functions"]
+        export = next(e for e in exports if e["name"] == b"CardEdit")
         self.assertEqual(export, {"name": b"CardEdit", "returnType": 10,
                                  "arguments": [(b"op", 10), (b"a", 10), (b"b", 10)]})
+
+    def test_player_battle_callback_refills_ap_and_applies_one_hp_setter(self):
+        for maximum, side, hp in ((6, 0, 750), (10, 1, 250)):
+            vm = ControlVm(self.generated, self.report)
+            vm.rules, vm.ap, vm.ap_max = AP_FULL, 0, maximum
+            vm.hp_side, vm.hp_value = side + 1, hp
+            vm.invoke("SceneBattle@R10BridgeUpdate", (16, 16))
+            self.assertIn(("ap", maximum, maximum), vm.events)
+            self.assertIn(("setter", side, hp), vm.events)
+            self.assertIn(("hp_result", hp), vm.events)
+            self.assertNotIn(("filter", side, 600, hp), vm.events)
+            vm.events.clear()
+            vm.invoke("SceneBattle@R10BridgeUpdate", (16, 16))
+            self.assertEqual(vm.events, [("ready", 1), ("ap", maximum, maximum)])
+
+    def test_hp_above_the_current_limit_is_rejected_before_any_setter(self):
+        vm = ControlVm(self.generated, self.report)
+        vm.hp_side, vm.hp_value = 2, 501
+        vm.invoke("SceneBattle@R10BridgeUpdate", (16, 16))
+        self.assertIn(("hp_result", -1), vm.events)
+        self.assertFalse(any(event[0] == "setter" for event in vm.events))
+
+    def test_another_scene_cannot_consume_a_command_or_reset_selection(self):
+        vm = ControlVm(self.generated, self.report)
+        vm.objects[100][20] = 701
+        vm.hp_side, vm.hp_value = 2, 20
+        vm.invoke("SceneBattle@R10BridgeUpdate", (16, 16))
+        self.assertEqual(vm.events, [])
+        self.assertEqual(vm.hp_side, 2)
+
+    def test_repeat_and_limited_skill_branches_are_independent(self):
+        vm = ControlVm(self.generated, self.report)
+        cases = [
+            ("R10Bridge_AllowRepeatAction", 0x439882, 0x4398A0, REPEAT_ACTIONS),
+            ("R10Bridge_AllowLimitedSkill", 0x439C5A, 0x439C90, UNLIMITED_SKILLS),
+            ("R10Bridge_LimitedSkillCost", 0x438FC4, 0x438FCA, UNLIMITED_SKILLS),
+        ]
+        for name, allowed, blocked, flag in cases:
+            for test_flag in (0, REPEAT_ACTIONS, UNLIMITED_SKILLS):
+                vm.rules = test_flag
+                for used in (0, 1):
+                    result = vm.run(vm.by_name[name], (), 100, (used,))
+                    self.assertEqual(result, {"continuation": blocked if used and not flag & test_flag else allowed, "stack": []})
+
+    def test_immunity_clears_existing_conditions_through_game_methods(self):
+        vm = ControlVm(self.generated, self.report)
+        vm.rules = STATUS_IMMUNITY
+        vm.statuses = ["poison", "sleep"]
+        self.assertEqual(vm.invoke("R10Bridge_ClearBattleStatus"), 2)
+        self.assertEqual(vm.events, [("clear_leaders", 0), ("erase", "sleep"), ("erase", "poison")])
+
+    def test_only_party_status_and_player_action_cap_branches_are_bypassed(self):
+        plain = zlib.decompress(self.generated[16:])
+        start = 16 + self.report["newCodeLength"]
+        extra = sum(len(builder.new_function_record(f["entry"], f["name"], f["returnType"],
+                                                   f.get("arguments", ()), f.get("locals", ())))
+                    for f in self.report["addedFunctions"])
+        functions = builder.read_functions(plain[start:start + 0x1395C28 - 0xDE5CFA + extra])
+        vm = ControlVm(self.generated, self.report)
+        vm.rules = STATUS_IMMUNITY | UNLIMITED_ACTIONS
+        for fid, args, receiver, want in (
+            (0x6135, (1, 2), 100, 0), (0x6135, (0, 2), 100, 0x3BDD20),
+            (0x68F5, (2,), 450, 0), (0x68F5, (2,), 460, 0x41992A),
+            (0x6903, (2,), 450, 1), (0x6903, (2,), 460, 0x41A892),
+            (0x6A44, (2,), 100, 0), (0x6A44, (3,), 100, 0), (0x6A44, (4,), 100, 0x42BAB6),
+        ):
+            result = vm.run({"entry": functions[fid]["address"], "returnType": 10}, args, receiver)
+            self.assertEqual(result, {"continuation": want, "stack": []} if want > 1 else want)
 
     def test_card_management_grant_ignores_the_inheritance_marker(self):
         pump = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardManagement")

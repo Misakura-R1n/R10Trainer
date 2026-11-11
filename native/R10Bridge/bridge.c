@@ -6,11 +6,15 @@
 #define HISTORY 16
 #define EXECUTING 4 /* Internal state; externally still pending until acknowledged. */
 #define CARD_CAPABILITY 512
+#define BATTLE_CAPABILITY 1024
 #define CARD_PAGE_SIZE 32
 #define CARD_ROW_LIMIT 4096
 #define CARD_TEXT_BYTES 64
 #define CARD_KEY_SIZE (CARD_TEXT_BYTES*4+2)
 enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR };
+enum { BATTLE_HP=14, BATTLE_AP_FULL, BATTLE_UNLIMITED_SKILLS, BATTLE_IMMUNITY, BATTLE_REPEAT, BATTLE_UNLIMITED_ACTIONS };
+enum { BATTLE_FLAG, BATTLE_ENTER, BATTLE_LEAVE, BATTLE_AP, BATTLE_CLAIM_HP, BATTLE_HP_VALUE,
+       BATTLE_FINISH_HP, BATTLE_TARGET_CHANGED, BATTLE_REFRESH_SELECTOR };
 typedef struct { LONG id, generation, enabled, state, kind, argument, argument2, context; DWORD submitted; } Command;
 typedef struct {
     LONG index, flags;
@@ -34,6 +38,7 @@ typedef struct {
     LONG resourcesFull, dataReady, food, medal, friendship, unit;
     LONG cardReady, cardContext;
     LONG selector, controlEnabled, battleReady; DWORD battleTick;
+    LONG battleVmContext, battleTarget, battleContext, battleRules, battleAp, battleApMax, battleRefresh;
     Command commands[HISTORY];
 } State;
 static State state;
@@ -59,7 +64,23 @@ static int equal(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; } return *a == *b;
 }
 static int cardCommand(LONG kind) { return kind>=CARD_PAGE && kind<=CARD_SET_STAR; }
-static LONG capability(LONG kind) { return cardCommand(kind) ? CARD_CAPABILITY : kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : kind==8 || kind==9 ? 256 : 16; }
+static int battleToggle(LONG kind) { return kind>=BATTLE_AP_FULL && kind<=BATTLE_UNLIMITED_ACTIONS; }
+static LONG capability(LONG kind) { return cardCommand(kind) ? CARD_CAPABILITY : kind==BATTLE_HP || battleToggle(kind) ? BATTLE_CAPABILITY : kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : kind==8 || kind==9 ? 256 : 16; }
+static LONG featureCommand(const char *name) {
+    if (equal(name,"ap_full")) return BATTLE_AP_FULL;
+    if (equal(name,"unlimited_skills")) return BATTLE_UNLIMITED_SKILLS;
+    if (equal(name,"status_immunity")) return BATTLE_IMMUNITY;
+    if (equal(name,"repeat_actions")) return BATTLE_REPEAT;
+    if (equal(name,"unlimited_actions")) return BATTLE_UNLIMITED_ACTIONS;
+    return equal(name,"resources_full") ? 9 : equal(name,"no_duplicate_cards") ? 5 :
+        equal(name,"food_redraw") ? 6 : equal(name,"auto_redistribute") ? 7 : equal(name,"hp_guard") ? 1 : 0;
+}
+static int battleSelection(const State *s) { return s->battleReady && GetTickCount()-s->battleTick<=250; }
+static void resetBattleSelection(void) {
+    state.battleReady=0;
+    state.battleAp=state.battleApMax=-1;
+    state.battleRefresh=1;
+}
 static LONG dataFeature(const char *name) { return equal(name,"food") ? 1 : equal(name,"medal") ? 2 : equal(name,"friendship") ? 3 : equal(name,"unit") ? 4 : equal(name,"star") ? 5 : 0; }
 static void copy(void *to, const void *from, unsigned n) {
     unsigned char *d = to; const unsigned char *s = from; while (n--) *d++ = *s++;
@@ -150,13 +171,17 @@ static int parse(const char *s, Request *r) {
 static void respond(const char *input, char *out) {
     Request r; State snapshot; char *p; LONG id;
     if (!parse(input,&r)) { errorResponse(out,"invalid_request"); return; }
-    int cardRequest=equal(r.op,"card");
-    if (cardRequest || equal(r.op,"set_feature") || equal(r.op,"action") || equal(r.op,"set_value")) {
-        LONG kind=equal(r.op,"set_value") ? 8 : cardRequest || equal(r.op,"action") ? r.action : equal(r.feature,"resources_full") ? 9 : equal(r.feature,"no_duplicate_cards") ? 5 : equal(r.feature,"food_redraw") ? 6 : equal(r.feature,"auto_redistribute") ? 7 : equal(r.feature,"hp_guard") ? 1 : 0;
+    int cardRequest=equal(r.op,"card"), hpRequest=equal(r.op,"set_battle_hp");
+    if (cardRequest || hpRequest || equal(r.op,"set_feature") || equal(r.op,"action") || equal(r.op,"set_value")) {
+        LONG kind=hpRequest ? BATTLE_HP : equal(r.op,"set_value") ? 8 : cardRequest || equal(r.op,"action") ? r.action : featureCommand(r.feature);
         if (cardRequest && (!cardCommand(kind) || r.present!=(1|8|32|64|128|512|1024) ||
             !r.context || r.argument>=CARD_ROW_LIMIT || (kind!=CARD_SET_STAR && r.argument2!=0) ||
             (kind==CARD_PAGE ? r.key[0]!=0 : r.key[0]==0))) { errorResponse(out,"invalid_card_request"); return; }
         if (equal(r.op,"set_feature") && (r.present != 15 || !kind)) { errorResponse(out,"unsupported_feature"); return; }
+        if (hpRequest) {
+            if (r.present!=(1|8|64|256|512) || !r.context || r.argument>1 || !r.value) { errorResponse(out,"invalid_battle_hp"); return; }
+            r.argument2=r.value;
+        }
         if (kind==8) {
             r.argument=dataFeature(r.feature); r.argument2=r.value;
             if (r.present!=267 || !r.argument || (r.argument<=3 && r.value>3) || (r.argument==4 && r.value>999) ||
@@ -172,7 +197,10 @@ static void respond(const char *input, char *out) {
         if (cardRequest && (!state.cardReady || r.context!=state.cardContext)) { LeaveCriticalSection(&gate); errorResponse(out,"card_context_changed"); return; }
         if ((kind==8 || (kind==9 && r.enabled)) && !state.dataReady) { LeaveCriticalSection(&gate); errorResponse(out,"data_not_ready"); return; }
         if (kind==8 && r.argument<=3 && state.resourcesFull) { LeaveCriticalSection(&gate); errorResponse(out,"resources_full_enabled"); return; }
-        if (kind>=3 && kind<=4 && (!state.battleReady || GetTickCount()-state.battleTick>250)) { LeaveCriticalSection(&gate); errorResponse(out,"battle_controls_unavailable"); return; }
+        if (kind>=3 && kind<=4 && !battleSelection(&state)) { LeaveCriticalSection(&gate); errorResponse(out,"battle_controls_unavailable"); return; }
+        if (hpRequest && (state.battleVmContext<0 || !battleSelection(&state) || r.context!=state.battleContext)) {
+            LeaveCriticalSection(&gate); errorResponse(out,"battle_context_changed"); return;
+        }
         if (state.pendingId) { LeaveCriticalSection(&gate); errorResponse(out,"command_pending"); return; }
         if (state.nextId == 2147483647) { LeaveCriticalSection(&gate); errorResponse(out,"command_id_exhausted"); return; }
         id = ++state.nextId;
@@ -207,7 +235,13 @@ static void respond(const char *input, char *out) {
     p=put(p,",\"heartbeatAgeMs\":"); p=unsignedNumber(p,GetTickCount()-snapshot.lastTick);
     p=field(p,",\"loadGeneration\":",snapshot.generation); p=field(p,",\"phase\":",snapshot.phase);
     p=field(p,",\"scriptVersion\":",snapshot.scriptVersion); p=field(p,",\"capabilities\":",snapshot.capabilities);
-    p=put(p,snapshot.battleReady && GetTickCount()-snapshot.battleTick<=250 ? ",\"battleReady\":true" : ",\"battleReady\":false");
+    int selection=battleSelection(&snapshot), ordinary=snapshot.battleVmContext>=0 && snapshot.phase==1;
+    p=put(p,selection ? ",\"battleReady\":true" : ",\"battleReady\":false");
+    p=put(p,ordinary ? ",\"ordinaryBattle\":true" : ",\"ordinaryBattle\":false");
+    p=field(p,",\"battleContext\":",ordinary && selection ? snapshot.battleContext : 0);
+    p=field(p,",\"battleRules\":",snapshot.battleRules);
+    p=put(p,",\"ap\":"); p=ordinary && snapshot.battleAp>=0 ? number(p,snapshot.battleAp) : put(p,"null");
+    p=put(p,",\"apMax\":"); p=ordinary && snapshot.battleApMax>0 ? number(p,snapshot.battleApMax) : put(p,"null");
     p=field(p,",\"loadKind\":",snapshot.loadKind); p=field(p,",\"loadSlot\":",snapshot.loadSlot);
     p=field(p,",\"lastCompletedGeneration\":",snapshot.lastCompletedGeneration); p=field(p,",\"lastLoadOutcome\":",snapshot.lastLoadOutcome);
     p=put(p,snapshot.noDuplicateCards ? ",\"noDuplicateCards\":true" : ",\"noDuplicateCards\":false");
@@ -223,6 +257,7 @@ static void respond(const char *input, char *out) {
     p=put(p,",\"playerHp\":"); p=snapshot.playerHp < 0 ? put(p,"null") : number(p,snapshot.playerHp);
     p=put(p,",\"playerHpMax\":"); p=snapshot.playerHpMax < 0 ? put(p,"null") : number(p,snapshot.playerHpMax);
     p=put(p,",\"enemyHp\":"); p=snapshot.enemyHp < 0 ? put(p,"null") : number(p,snapshot.enemyHp);
+    p=put(p,",\"enemyHpMax\":"); p=snapshot.enemyHpMax < 0 ? put(p,"null") : number(p,snapshot.enemyHpMax);
     p=field(p,",\"blockedHits\":",snapshot.blockedHits); p=field(p,",\"lastRequestedHp\":",snapshot.lastRequestedHp);
     p=field(p,",\"lastCommandId\":",snapshot.lastCommandId); p=put(p,",\"lastCommandState\":\""); p=put(p,commandState(snapshot.lastCommandState));
     p=put(p,"\"}\n"); *p=0;
@@ -296,20 +331,26 @@ int __cdecl Tick(int marker,int a,int b) {
     if (initialized != 2 || GetCurrentThreadId()!=state.gameThreadId) return -3;
     EnterCriticalSection(&gate);
     state.heartbeat++; state.lastTick=GetTickCount();
-    if (marker==0) { state.dataReady=0; state.cardReady=0; state.cardBatch=-1; state.cardBatchEnabled=0; state.scriptVersion=a; state.capabilities=b; state.controlEnabled=state.battleReady=0; }
+    if (marker==0) {
+        state.dataReady=0; state.cardReady=0; state.cardBatch=-1; state.cardBatchEnabled=0; state.scriptVersion=a; state.capabilities=b;
+        state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
+    }
     else if (marker==1) { state.frame++; if (state.phase==0) state.phase=1; }
     else if (marker==2) {
         state.dataReady=0; state.cardReady=0;
         state.cardBatch=-1; state.cardBatchEnabled=0;
         state.generation++; state.phase=2; state.loadKind=a; state.loadSlot=b; state.lastLoadOutcome=0;
         state.playerHp=state.playerHpMax=state.enemyHp=state.enemyHpMax=-1;
-        state.controlEnabled=state.battleReady=0;
+        state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
     } else if (marker==3 && state.phase==2 && state.loadKind==a) { state.phase=1; state.lastCompletedGeneration=state.generation; state.lastLoadOutcome=1; }
     else if (marker==4 && state.phase==2 && state.loadKind==a) { state.phase=0; state.lastLoadOutcome=2; }
     else if (marker==10) { state.playerHp=a; state.playerHpMax=b; }
     else if (marker==11) { state.enemyHp=a; state.enemyHpMax=b; }
     else if (marker==12) { state.playerHp=state.playerHpMax=state.enemyHp=state.enemyHpMax=-1; }
-    else if (marker==20) { state.selector=a; state.controlEnabled=b; if (!b) state.battleReady=0; }
+    else if (marker==20) {
+        if (!b || state.selector!=a) resetBattleSelection();
+        state.selector=a; state.controlEnabled=b;
+    }
     if (marker==1 && state.pendingId) {
         Command *c=&state.commands[state.pendingId % HISTORY];
         if (c->generation!=state.generation || state.phase!=1 || state.scriptVersion!=1 || !(state.capabilities & capability(c->kind)) || (c->state!=EXECUTING && GetTickCount()-c->submitted>3000)) c->state=3;
@@ -318,6 +359,13 @@ int __cdecl Tick(int marker,int a,int b) {
         else if (c->kind==7) { state.autoRedistribute=c->enabled; c->state=2; }
         else if (c->kind==9 && !c->enabled) { state.resourcesFull=0; c->state=2; }
         else if (c->kind==1 && state.scriptVersion==1 && (state.capabilities & 4)) { state.hpGuard=c->enabled; c->state=2; }
+        else if (battleToggle(c->kind)) {
+            LONG bit=1L<<(c->kind-BATTLE_AP_FULL);
+            if (c->enabled) state.battleRules|=bit; else state.battleRules&=~bit;
+            state.battleRefresh=1; c->state=2;
+        }
+        else if (c->kind==BATTLE_HP && c->state==1 &&
+            (state.battleVmContext<0 || !state.battleReady || c->context!=state.battleContext)) c->state=3;
         if (c->state!=1 && c->state!=EXECUTING) { state.lastCommandState=c->state; state.pendingId=0; }
     }
     LONG result=state.generation; LeaveCriticalSection(&gate); return result;
@@ -329,17 +377,64 @@ int __cdecl Control(int op,int a,int b) {
     EnterCriticalSection(&gate);
     Command *c=state.pendingId ? &state.commands[state.pendingId % HISTORY] : NULL;
     if (op==4) result=state.selector==a && state.controlEnabled;
-    else if (op==5) { state.battleReady=a; state.battleTick=GetTickCount(); }
+    else if (op==5) {
+        if (!a) resetBattleSelection();
+        else {
+            if (!state.battleReady || state.battleTarget!=b) {
+                if (state.battleContext<2147483647) state.battleContext++;
+                else { resetBattleSelection(); LeaveCriticalSection(&gate); return 0; }
+            }
+            state.battleReady=1; state.battleTarget=b; state.battleTick=GetTickCount();
+        }
+    }
     else if (c && c->state==1 && c->generation==state.generation && state.phase==1 && c->kind>=2 && c->kind<=4) {
         if (op==0) result=c->kind;
         else if (op==1) result=c->argument;
         else if (op==2) result=c->argument2;
         else if (op==3) {
             c->state=a ? 2 : 3; state.lastCommandState=c->state; state.pendingId=0;
-            if (a && c->kind>=3) state.controlEnabled=state.battleReady=0;
+            if (a && c->kind>=3) { state.controlEnabled=0; resetBattleSelection(); }
         }
     }
-    (void)b; LeaveCriticalSection(&gate); return result;
+    LeaveCriticalSection(&gate); return result;
+}
+
+int __cdecl Battle(int op,int a,int b) {
+    if (initialized!=2 || GetCurrentThreadId()!=state.gameThreadId) return 0;
+    EnterCriticalSection(&gate);
+    LONG result=0;
+    if (state.scriptVersion==1 && (state.capabilities & BATTLE_CAPABILITY)) {
+        if (op==BATTLE_ENTER || op==BATTLE_LEAVE) {
+            state.battleVmContext=op==BATTLE_ENTER ? a : -1;
+            state.controlEnabled=0;
+            resetBattleSelection();
+        } else if (op==BATTLE_FINISH_HP && state.pendingId) {
+            Command *c=&state.commands[state.pendingId % HISTORY];
+            if (c->kind==BATTLE_HP && c->state==EXECUTING) {
+                /* Setter callbacks can leave the battle before readback. Release the slot either way. */
+                int valid=state.phase==1 && state.battleVmContext>=0 && state.battleReady &&
+                    c->generation==state.generation && c->context==state.battleContext;
+                c->state=valid && a==c->argument2 ? 2 : 3;
+                state.lastCommandState=c->state; state.pendingId=0;
+            }
+        } else if (state.phase==1 && state.battleVmContext>=0) {
+            if (op==BATTLE_FLAG) result=b==state.battleVmContext && (!a || (state.battleRules & a));
+            else if (op==BATTLE_TARGET_CHANGED && a==state.battleVmContext) resetBattleSelection();
+            else if (op==BATTLE_AP) { state.battleAp=a; state.battleApMax=b; }
+            else if (op==BATTLE_REFRESH_SELECTOR) { result=state.battleRefresh; state.battleRefresh=0; }
+            else if (state.pendingId) {
+                Command *c=&state.commands[state.pendingId % HISTORY];
+                if (c->kind==BATTLE_HP && c->generation==state.generation) {
+                    if (op==BATTLE_CLAIM_HP && c->state==1 && state.battleReady &&
+                        c->context==state.battleContext && GetTickCount()-c->submitted<=3000) {
+                        c->state=EXECUTING; result=c->argument+1;
+                    } else if (op==BATTLE_HP_VALUE && c->state==EXECUTING &&
+                        state.battleReady && c->context==state.battleContext) result=c->argument2;
+                }
+            }
+        }
+    }
+    LeaveCriticalSection(&gate); return result;
 }
 /* Only call this export from a damage-specific script wrapper, never initialization setters. */
 int __cdecl FilterHp(int side,int oldHp,int requestedHp) {

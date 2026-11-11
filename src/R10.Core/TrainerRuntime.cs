@@ -71,6 +71,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
     }
     public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) => Queue(() => Execute(id, () =>
     {
+        if (FeatureCatalog.IsBattleHp(id)) throw new InvalidOperationException("此功能需要游戏组件。");
         if (!FeatureCatalog.ValidValue(id, value)) throw new ArgumentOutOfRangeException(nameof(value), "数值超出范围或步进不正确。");
         EnsureReady(id);
         if (id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship && IsRequested(FeatureId.Resources))
@@ -88,7 +89,8 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             if (_closing && enabled) throw new InvalidOperationException("正在恢复修改，请先完成关闭。");
             _patches.SetRequested(id, enabled); _patchWorkRequested = true; return;
         }
-        if (id == FeatureId.NoDuplicateCards) throw new InvalidOperationException("此功能需要游戏组件。");
+        if (id == FeatureId.NoDuplicateCards || FeatureCatalog.RequiresBattleComponent(id))
+            throw new InvalidOperationException("此功能需要游戏组件。");
         if (enabled && (_connection == null || _closing)) throw new InvalidOperationException("尚未连接游戏，或正在恢复修改。");
         if (enabled && _dataFault != null) throw new InvalidOperationException(_dataFault);
         _requested[id] = enabled; _active[id] = false;
@@ -380,7 +382,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             if (_state is ConnectionState.Error or ConnectionState.RestorePending or ConnectionState.Closed) active = false;
             bool canEdit = !_closing && _connection != null && (f.Kind == FeatureKind.Toggle || GameplayReady);
             if (!patch && _dataFault != null) canEdit = false;
-            if (f.Id == FeatureId.NoDuplicateCards) canEdit = false;
+            if (f.Id == FeatureId.NoDuplicateCards || FeatureCatalog.RequiresBattleComponent(f.Id)) canEdit = false;
             if (f.Id == FeatureId.DeathRate && _scene?.DeathRateWritable != true) canEdit = false;
             if (f.Id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship && IsRequested(FeatureId.Resources)) canEdit = false;
             string? detail = f.Id == FeatureId.Army && GameplayReady && !_values.GetValueOrDefault(f.Id).HasValue

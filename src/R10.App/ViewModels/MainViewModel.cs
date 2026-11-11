@@ -94,7 +94,7 @@ public sealed class MainViewModel : ObservableObject
         });
         Error = snapshot.Error ?? ""; ShowError = Error.Length > 0;
         var canCancel = snapshot.ProcessId.HasValue && snapshot.Connection != ConnectionState.Closed;
-        foreach (var (id, feature) in Features) feature.Update(snapshot.Features.GetValueOrDefault(id) ?? new(), canCancel);
+        foreach (var (id, feature) in Features) feature.Update(snapshot.Features.GetValueOrDefault(id) ?? new(), canCancel, snapshot.Battle);
         GameSetup.Observe(snapshot);
         Cards.Update(snapshot);
         UpdatePageStatus();

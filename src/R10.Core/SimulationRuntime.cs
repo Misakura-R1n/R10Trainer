@@ -5,6 +5,7 @@ namespace R10.Core;
 /// <summary>Explicitly selected UI demonstration. Never discovers or opens any process.</summary>
 public sealed class SimulationRuntime : ITrainerRuntime
 {
+    private static readonly BattleEditContext DemoBattle = new(new(0, "demo", 0, true), 1);
     private readonly Dictionary<FeatureId, FeatureObservation> _features = FeatureCatalog.All.ToDictionary(x => x.Id, _ => new FeatureObservation(CanEdit:true));
     private bool _closed;
     public TrainerSnapshot Current { get; private set; } = TrainerSnapshot.Empty;
@@ -13,16 +14,24 @@ public sealed class SimulationRuntime : ITrainerRuntime
     {
         var values = new Dictionary<FeatureId, decimal> { [FeatureId.Difficulty] = 8, [FeatureId.Turn] = 6, [FeatureId.DeathRate] = 12.5m, [FeatureId.Army] = 1200, [FeatureId.Food] = 2, [FeatureId.Medal] = 1, [FeatureId.Friendship] = 2, [FeatureId.Unit] = 35, [FeatureId.Star] = 80 };
         foreach (var (id, value) in values) _features[id] = _features[id] with { Value = value };
+        _features[FeatureId.PlayerHp] = _features[FeatureId.PlayerHp] with { Value = 1851, Maximum = 2400 };
+        _features[FeatureId.EnemyHp] = _features[FeatureId.EnemyHp] with { Value = 9000, Maximum = 9000 };
+        _features[FeatureId.ApFull] = _features[FeatureId.ApFull] with { Value = 3, Maximum = 6 };
         Publish();
     }
     public Task StartAsync() { Publish(); return Task.CompletedTask; }
     public Task<OperationResult> SetValueAsync(FeatureId id, decimal value)
     {
         if (_closed || !FeatureCatalog.ValidValue(id, value)) return Task.FromResult(OperationResult.Fail("数值超出范围。"));
+        if (FeatureCatalog.IsBattleHp(id) && (!_features[id].CanEdit || value > _features[id].Maximum))
+            return Task.FromResult(OperationResult.Fail("战斗 HP 超出范围，或当前不可编辑。"));
         if (id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship && _features[FeatureId.Resources].Requested)
             return Task.FromResult(OperationResult.Fail("请先关闭资源全满。"));
         _features[id] = _features[id] with { Value = value, Error = null }; Publish(); return Task.FromResult(OperationResult.Ok);
     }
+    public Task<OperationResult> SetBattleHpAsync(FeatureId id, decimal value, BattleEditContext expected) =>
+        FeatureCatalog.IsBattleHp(id) && Current.Battle == expected ? SetValueAsync(id, value) :
+        Task.FromResult(OperationResult.Fail("战斗目标已变化。"));
     public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled)
     {
         if (_closed || FeatureCatalog.Get(id).Kind != FeatureKind.Toggle) return Task.FromResult(OperationResult.Fail("功能不可用。"));
@@ -32,6 +41,14 @@ public sealed class SimulationRuntime : ITrainerRuntime
             var other = id == FeatureId.EnemyKill ? FeatureId.EnemyNear : FeatureId.EnemyKill;
             _features[other] = _features[other] with { Requested = false, Active = false };
         }
+        if (id is FeatureId.EnemyKill or FeatureId.EnemyNear)
+        {
+            bool overridden = _features[FeatureId.EnemyKill].Requested || _features[FeatureId.EnemyNear].Requested;
+            _features[FeatureId.EnemyHp] = _features[FeatureId.EnemyHp] with
+                { CanEdit = !overridden, Detail = overridden ? "请先关闭敌人濒死或直死" : null };
+        }
+        if (enabled && id == FeatureId.ApFull)
+            _features[id] = _features[id] with { Value = _features[id].Maximum };
         if (id == FeatureId.Resources)
             foreach (var counter in new[] { FeatureId.Food, FeatureId.Medal, FeatureId.Friendship })
                 _features[counter] = _features[counter] with { Value = enabled ? 3 : _features[counter].Value, CanEdit = !enabled };
@@ -46,7 +63,8 @@ public sealed class SimulationRuntime : ITrainerRuntime
     private void Publish()
     {
         Current = new(_closed ? ConnectionState.Closed : ConnectionState.Ready, _closed ? "已关闭演示" : "战斗中 · 演示", null, true,
-            new ReadOnlyDictionary<FeatureId, FeatureObservation>(new Dictionary<FeatureId, FeatureObservation>(_features)));
+            new ReadOnlyDictionary<FeatureId, FeatureObservation>(new Dictionary<FeatureId, FeatureObservation>(_features)))
+            { Battle = _closed ? null : DemoBattle };
         SnapshotChanged?.Invoke(Current);
     }
 }

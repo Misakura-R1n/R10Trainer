@@ -2,6 +2,7 @@ LIBRARY R10Bridge.dll
 EXPORTS
     Cards
     CardEdit
+    Battle
     Control
     Feature
     Data

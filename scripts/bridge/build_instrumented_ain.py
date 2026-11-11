@@ -267,7 +267,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     extended = bytearray(code[:-6])  # move terminal FUNC 0 after the appended prefixes
     report_hooks, listing, added_functions, code_edits = [], [], [], []
     hooks = [dict(hook) for hook in HOOKS]
-    capabilities = 1023 if profile == "controls" else 1007 if profile == "full" else 1
+    capabilities = 2047 if profile == "controls" else 2031 if profile == "full" else 1
     hooks[0]["tickArguments"] = [("const", 1), ("const", capabilities)]
     redirected = set()
 
@@ -296,13 +296,16 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         code_edits.append({"pc": pc, "originalHex": expected.hex().upper(), "replacementHex": replacement.hex().upper(), "reason": reason})
 
     if profile in {"full", "controls"}:
+        from battle_ain import flag, install_battle
         # Null is the AIN value -1, as used by SceneBattle.Run; heap index zero is valid.
         def sampler(asm):
             for global_id in (0xF0, 0x104, 0x123, 0x124):
                 asm.global_ref(global_id); asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "invalid")
             asm.global_ref(0x104); asm.emit("PUSH", 0); asm.emit("REF")
             asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "invalid")
+            flag(asm, 0); asm.emit("IFNZ", "sample")
             asm.global_get(0xF0, 0x65E9); asm.emit("IFZ", "invalid")
+            asm.label("sample")
             for marker, global_id, hp, maximum in ((10, 0x104, 0x6CA2, 0x6CA0), (11, 0x123, 0x6C42, 0x6C3C)):
                 asm.emit("PUSH", marker); asm.global_get(global_id, hp); asm.global_get(global_id, maximum)
                 asm.emit("CALLHLL", 36, 0, -1); asm.emit("POP")
@@ -371,18 +374,24 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         from card_management_ain import install_card_management
         hooks[1]["cardManagement"] = install_card_management(add_function)
 
-    if profile == "controls":
-        from controls_ain import install_controls
-        def redirect(function_id, body):
+    if profile in {"full", "controls"}:
+        def redirect(function_id, name, entry, arguments, body):
             original = functions[function_id]
+            require(original["name"] == name.encode("ascii") and original["address"] == entry and
+                    original["args"] == arguments and function_id not in redirected and
+                    code[entry - 6:entry] == instruction("FUNC", function_id),
+                    f"Redirect function metadata mismatch: {name}")
             asm = Assembler(len(extended)); asm.emit("FUNC", function_id)
-            body(asm); asm.emit("JUMP", original["address"]); asm.emit("ENDFUNC", function_id)
+            body(asm); asm.emit("JUMP", entry); asm.emit("ENDFUNC", function_id)
             extended.extend(asm.finish())
             struct.pack_into("<i", func, original["addressOffset"], asm.start + 6)
             redirected.add(function_id)
-            listing.append(f"; control prefix {function_id:#x}")
+            listing.append(f"; battle prefix {name} ({function_id:#x})")
             listing.extend(f"{row['pc']:08X} {row['op']} {row['args']}" for row in asm.rows)
-        hooks[1]["controls"] = install_controls(add_function, redirect)
+        install_battle(add_function, redirect, replace_code, instruction, sample_id, profile == "controls")
+    if profile == "controls":
+        from controls_ain import install_load_control
+        hooks[1]["controls"] = install_load_control(add_function)
 
     for hook in hooks:
         original = functions[hook["id"]]
@@ -403,7 +412,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))
-    declaration = b"R10Bridge\0" + i32(7 if profile in {"full", "controls"} else 1) + b"Tick\0" + i32(10) + i32(3)
+    declaration = b"R10Bridge\0" + i32(8 if profile in {"full", "controls"} else 1) + b"Tick\0" + i32(10) + i32(3)
     declaration += b"marker\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     if profile in {"full", "controls"}:
         declaration += b"FilterHp\0" + i32(10) + i32(3)
@@ -415,6 +424,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         declaration += b"Feature\0" + i32(10) + i32(3) + b"kind\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
         declaration += b"Data\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
         declaration += b"CardEdit\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
+        declaration += b"Battle\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     hll = b"HLL0" + i32(len(libraries) + 1) + sections["HLL0"][8:] + declaration
     updated = {**sections, "CODE": b"CODE" + i32(len(extended)) + extended, "FUNC": bytes(func), "HLL0": hll}
     # Verify narrow mutations independently of byte serialization and preserve all text/metadata.

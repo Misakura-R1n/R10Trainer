@@ -6,12 +6,19 @@ namespace R10.Bridge.Runtime;
 /// <summary>Explicit bridge mode. It never falls back to process-memory writes.</summary>
 public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRuntime
 {
-    internal static readonly IReadOnlyDictionary<FeatureId, (string Name, int Capability)> ComponentFeatures =
-        new Dictionary<FeatureId, (string, int)>
+    internal static readonly IReadOnlyDictionary<FeatureId, (string Name, int Capability, BattleRules Rule)> ComponentFeatures =
+        new Dictionary<FeatureId, (string, int, BattleRules)>
         {
-            [FeatureId.Hp] = ("hp_guard", 4), [FeatureId.NoDuplicateCards] = ("no_duplicate_cards", 32),
-            [FeatureId.Resources] = ("resources_full",256),
-            [FeatureId.Redraw] = ("food_redraw", 64), [FeatureId.Redistribute] = ("auto_redistribute", 128)
+            [FeatureId.Hp] = ("hp_guard", 4, BattleRules.None),
+            [FeatureId.NoDuplicateCards] = ("no_duplicate_cards", 32, BattleRules.None),
+            [FeatureId.Resources] = ("resources_full", 256, BattleRules.None),
+            [FeatureId.Redraw] = ("food_redraw", 64, BattleRules.None),
+            [FeatureId.Redistribute] = ("auto_redistribute", 128, BattleRules.None),
+            [FeatureId.ApFull] = ("ap_full", BridgeState.BattleCapability, BattleRules.ApFull),
+            [FeatureId.UnlimitedSkills] = ("unlimited_skills", BridgeState.BattleCapability, BattleRules.UnlimitedSkills),
+            [FeatureId.StatusImmunity] = ("status_immunity", BridgeState.BattleCapability, BattleRules.StatusImmunity),
+            [FeatureId.RepeatActions] = ("repeat_actions", BridgeState.BattleCapability, BattleRules.RepeatActions),
+            [FeatureId.UnlimitedActions] = ("unlimited_actions", BridgeState.BattleCapability, BattleRules.UnlimitedActions)
         };
     internal static readonly IReadOnlyDictionary<FeatureId,string> ValueFeatures = new Dictionary<FeatureId,string>
     {
@@ -35,26 +42,46 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
     public BridgeTrainerRuntime(string gameDirectory) : this(new DiscoveringBridgeClient(gameDirectory)) { }
     public BridgeTrainerRuntime(IBridgeClient client) => _client=client;
     public Task StartAsync() { lock (_startGate) { if (!_closed) _loop ??= Task.Run(PollAsync); } return Task.CompletedTask; }
-    public Task<OperationResult> SetValueAsync(FeatureId id,decimal value) => SetValueCoreAsync(id,value,null);
+    public Task<OperationResult> SetValueAsync(FeatureId id,decimal value) =>
+        SetValueCoreAsync(id,value,null,FeatureCatalog.IsBattleHp(id) ? Current.Battle : null);
     public Task<OperationResult> SetValueForEpochAsync(FeatureId id,decimal value,GameLoadEpoch expected) =>
         SetValueCoreAsync(id,value,expected ?? throw new ArgumentNullException(nameof(expected)));
-    private async Task<OperationResult> SetValueCoreAsync(FeatureId id,decimal value,GameLoadEpoch? expected)
+    public Task<OperationResult> SetBattleHpAsync(FeatureId id, decimal value, BattleEditContext expected) =>
+        FeatureCatalog.IsBattleHp(id) ? SetValueCoreAsync(id, value, null, expected) :
+        Task.FromResult(OperationResult.Fail("此功能不是战斗 HP。"));
+    private async Task<OperationResult> SetValueCoreAsync(FeatureId id,decimal value,GameLoadEpoch? expected,
+        BattleEditContext? battle = null)
     {
-        if (!ValueFeatures.TryGetValue(id,out var feature) || !FeatureCatalog.ValidValue(id,value)) return OperationResult.Fail("数值或功能不受支持。");
+        var feature = ValueFeatures.GetValueOrDefault(id);
+        if ((battle is null && feature is null) || !FeatureCatalog.ValidValue(id,value)) return OperationResult.Fail("数值或功能不受支持。");
         if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在关闭组件连接。");
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
             if (_closed || Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("组件连接已关闭或正在关闭。");
             var state=await _client.GetStateAsync().ConfigureAwait(false);
-            if (!CanWriteData(state) || state.Session is null) return OperationResult.Fail("请安装新版组件并等待游戏数据就绪。");
-            if (expected is not null && (!expected.Ready || expected.ProcessId!=state.Pid ||
-                expected.Session!=state.Session || expected.Generation!=state.LoadGeneration))
-                return OperationResult.Fail("游戏会话或读档状态已变化，请重新确认后应用。");
-            if (state.ResourcesFull && id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship)
-                return OperationResult.Fail("请先关闭资源全满，再单独修改此数值。");
-            var command=await _client.SetValueForSessionAsync(expected?.Session ?? state.Session,feature,(int)value,
-                expected?.Generation ?? state.LoadGeneration).ConfigureAwait(false);
+            if (state.Session is null) return OperationResult.Fail("游戏组件会话尚未就绪。");
+            BridgeCommand command;
+            if (battle is not null)
+            {
+                if (ReadBattle(state) != battle) return OperationResult.Fail("战斗目标已变化，请重新输入。");
+                var (current, maximum) = ReadHp(state, id);
+                if (current is not > 0 || maximum is not > 0 || value > maximum.Value)
+                    return OperationResult.Fail("HP 须在 1 到当前上限之间，且战斗目标须存活。");
+                command = await _client.SetBattleHpForSessionAsync(battle.Epoch.Session, battle.Epoch.Generation,
+                    battle.Id, id == FeatureId.PlayerHp ? 0 : 1, (int)value).ConfigureAwait(false);
+            }
+            else
+            {
+                if (!CanWriteData(state)) return OperationResult.Fail("请安装新版组件并等待游戏数据就绪。");
+                if (expected is not null && (!expected.Ready || expected.ProcessId!=state.Pid ||
+                    expected.Session!=state.Session || expected.Generation!=state.LoadGeneration))
+                    return OperationResult.Fail("游戏会话或读档状态已变化，请重新确认后应用。");
+                if (state.ResourcesFull && id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship)
+                    return OperationResult.Fail("请先关闭资源全满，再单独修改此数值。");
+                command=await _client.SetValueForSessionAsync(expected?.Session ?? state.Session,feature!, (int)value,
+                    expected?.Generation ?? state.LoadGeneration).ConfigureAwait(false);
+            }
             command=await AwaitCommandAsync(state.Session,command).ConfigureAwait(false);
             try { await RefreshAsync().ConfigureAwait(false); } catch (BridgeException error) { PublishError(error); }
             return CommandResult(command);
@@ -248,16 +275,43 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
                 Detail:full ? "请先关闭资源全满。" : dataReady ? "通过游戏自身方法修改。" : "请安装新版组件并等待游戏数据就绪。",
                 Help:FeatureCatalog.Get(id).Help);
         }
+        var battle = ReadBattle(state);
+        bool battleRulesReady = CanWrite(state, FeatureId.ApFull);
+        const string upgradeBattle = "请安装新版游戏组件并重新启动游戏。";
+        foreach (var (id, definition) in ComponentFeatures)
+        {
+            if (definition.Rule == BattleRules.None) continue;
+            bool requested = state.BattleRules.HasFlag(definition.Rule);
+            bool isAp = id == FeatureId.ApFull;
+            features[id] = new(Value: isAp ? state.Ap : null, Maximum: isAp ? state.ApMax : null,
+                Requested: requested, Active: requested && battleRulesReady && state.OrdinaryBattle, CanEdit: battleRulesReady,
+                Detail: !battleRulesReady ? upgradeBattle : !state.OrdinaryBattle ? "等待普通战斗" : null,
+                ActiveDescription: "战斗开关已生效。");
+        }
+        foreach (var id in new[] { FeatureId.PlayerHp, FeatureId.EnemyHp })
+        {
+            var (current, maximum) = ReadHp(state, id);
+            bool editable = battle is not null && current is > 0 && maximum is > 0;
+            features[id] = new(Value: state.OrdinaryBattle ? current : null, Maximum: state.OrdinaryBattle ? maximum : null,
+                CanEdit: editable, Detail: editable ? null : battleRulesReady ? "等待我方操作阶段" : upgradeBattle);
+        }
         var connection=state.Phase!=1 ? ConnectionState.Loading : state.HeartbeatAgeMs is null or <0 or >2000 ? ConnectionState.Error : ComponentFeatures.Keys.Any(id=>CanWrite(state,id)) ? ConnectionState.Ready : ConnectionState.Unsupported;
         Publish(new(connection,$"桥接 · PID {state.Pid} · 读档 {state.LoadGeneration}",state.Pid,_client.IsSimulation,features,
             connection==ConnectionState.Error ? "游戏线程心跳未知或暂停，已停用操作。" : connection==ConnectionState.Unsupported ? "当前脚本尚未提供兼容的组件功能入口。" : null,"bridge",
             "组件提供游戏线程功能与状态读取。") {
-                LoadEpoch=state.Session is { } session && state.ScriptVersion==1 && (state.Capabilities.GetValueOrDefault() & 8)!=0
-                    ? new(state.Pid,session,state.LoadGeneration,state.Phase==1 && state.HeartbeatAgeMs is >=0 and <=2000) : null,
+                LoadEpoch=ReadEpoch(state), Battle=battle,
                 CardManagementAvailable = state.CardManagementAvailable,
                 CardContext = state.CardManagementAvailable && state.Phase == 1 && state.GameThreadResponsive == true ? state.CardContext : 0
             });
     }
+    private static (long? Current, long? Maximum) ReadHp(BridgeState state, FeatureId id) =>
+        id == FeatureId.PlayerHp ? (state.PlayerHp, state.PlayerHpMax) : (state.EnemyHp, state.EnemyHpMax);
+    private static GameLoadEpoch? ReadEpoch(BridgeState state) =>
+        state.Session is { } session && state.ScriptVersion==1 && (state.Capabilities.GetValueOrDefault() & 8)!=0
+            ? new(state.Pid,session,state.LoadGeneration,state.Phase==1 && state.HeartbeatAgeMs is >=0 and <=2000) : null;
+    private static BattleEditContext? ReadBattle(BridgeState state) =>
+        state.BattleFeaturesAvailable && state.OrdinaryBattle && state.BattleReady && state.BattleContext > 0 &&
+        ReadEpoch(state) is { Ready: true } epoch ? new(epoch, state.BattleContext) : null;
     private static bool CanWriteData(BridgeState state) => CanWrite(state,FeatureId.Resources) && state.DataReady;
     private static bool CanWrite(BridgeState state,FeatureId id=FeatureId.Hp) => state.Phase==1 && state.ScriptVersion==1 && ComponentFeatures.TryGetValue(id,out var feature) && (state.Capabilities.GetValueOrDefault() & feature.Capability)!=0 && state.HeartbeatAgeMs is >=0 and <=2000;
     private static Dictionary<FeatureId,FeatureObservation> EmptyFeatures() => FeatureCatalog.All.ToDictionary(x=>x.Id,_=>new FeatureObservation(Detail:"此功能尚未接入桥接模式。"));

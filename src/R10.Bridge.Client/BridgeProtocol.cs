@@ -17,6 +17,9 @@ public sealed class BridgeException(string code, string message, bool outcomeUnk
     public bool OutcomeUnknown { get; } = outcomeUnknown;
 }
 
+[Flags]
+public enum BattleRules { None = 0, ApFull = 1, UnlimitedSkills = 2, StatusImmunity = 4, RepeatActions = 8, UnlimitedActions = 16 }
+
 public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, long Frame,
     long LoadGeneration, int Phase, bool HpGuard, long LastCommandId, string LastCommandState,
     long? PlayerHp, long? PlayerHpMax, long? EnemyHp,
@@ -26,6 +29,14 @@ public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, lon
 {
     public string? Session { get; init; }
     public bool BattleReady { get; init; }
+    public const int BattleCapability = 1024;
+    public bool BattleFeaturesAvailable => (Capabilities.GetValueOrDefault() & BattleCapability) != 0;
+    public bool OrdinaryBattle { get; init; }
+    public int BattleContext { get; init; }
+    public BattleRules BattleRules { get; init; }
+    public long? Ap { get; init; }
+    public long? ApMax { get; init; }
+    public long? EnemyHpMax { get; init; }
     public bool NoDuplicateCards { get; init; }
     public bool ResourcesFull { get; init; }
     public bool DataReady { get; init; }
@@ -88,6 +99,8 @@ public interface IBridgeClient
     Task<BridgeCommand> GetCommandResultForSessionAsync(string session, long id, CancellationToken cancellationToken = default);
     Task<BridgeCommand> SetValueForSessionAsync(string session, string feature, int value, long generation, CancellationToken cancellationToken = default) =>
         throw new BridgeException("unsupported_operation", "This bridge client does not support typed data operations.");
+    Task<BridgeCommand> SetBattleHpForSessionAsync(string session, long generation, int context, int side, int value, CancellationToken cancellationToken = default) =>
+        throw new BridgeException("unsupported_operation", "This bridge client does not support battle HP editing.");
     Task<BridgeCommand> ActionForSessionAsync(string session, int action, int argument, int argument2, long generation, CancellationToken cancellationToken = default) =>
         throw new BridgeException("unsupported_operation", "This bridge client does not support semantic controls.");
     Task<BridgeCommand> SubmitCardForSessionAsync(string session, long generation, int context, CardRequest request, CancellationToken cancellationToken = default) =>

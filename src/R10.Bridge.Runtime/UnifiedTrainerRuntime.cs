@@ -91,6 +91,8 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
     public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) => ExecuteAsync(id, false, runtime => runtime.SetValueAsync(id, value));
     public Task<OperationResult> SetValueForEpochAsync(FeatureId id, decimal value, GameLoadEpoch expected) =>
         ExecuteAsync(id, false, runtime => runtime.SetValueForEpochAsync(id, value, expected));
+    public Task<OperationResult> SetBattleHpAsync(FeatureId id, decimal value, BattleEditContext expected) =>
+        ExecuteAsync(id, false, runtime => runtime.SetBattleHpAsync(id, value, expected));
     public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => ExecuteAsync(id, false, runtime => runtime.SetLockAsync(id, enabled));
     public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => ExecuteAsync(id, true, runtime => runtime.SetToggleAsync(id, enabled));
 
@@ -119,9 +121,10 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
             var memory = pair.Memory.Current;
             var bridge = pair.Bridge.Current;
             if (DifferentProcesses(memory, bridge)) return OperationResult.Fail("游戏进程发生变化，请等待重新连接。");
-            if (BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id) || BridgeTrainerRuntime.ValueFeatures.ContainsKey(id))
+            if (BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id) || BridgeTrainerRuntime.ValueFeatures.ContainsKey(id) || FeatureCatalog.IsBattleHp(id))
             {
                 if (toggle != BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id)) return OperationResult.Fail("此组件功能不支持该操作。");
+                if (id == FeatureId.EnemyHp && EnemyHpOverridden(memory)) return OperationResult.Fail("请先关闭敌人濒死或直死。");
                 if (!ComponentReady(memory, bridge) || bridge.Features.GetValueOrDefault(id)?.CanEdit != true) return OperationResult.Fail("组件功能尚未就绪，请安装新版组件并启动所选游戏。");
                 return await action(pair.Bridge).ConfigureAwait(false);
             }
@@ -205,6 +208,9 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
         memory.ProcessId is { } memoryPid && memoryPid == bridge.ProcessId &&
         memory.Connection is ConnectionState.Ready or ConnectionState.Loading &&
         bridge.Connection == ConnectionState.Ready;
+    private static bool EnemyHpOverridden(TrainerSnapshot memory) =>
+        memory.Features.GetValueOrDefault(FeatureId.EnemyKill)?.Requested == true ||
+        memory.Features.GetValueOrDefault(FeatureId.EnemyNear)?.Requested == true;
     private static TrainerSnapshot Empty() => TrainerSnapshot.Empty with
     {
         RuntimeMode = "unified", Status = "请选择游戏", Notice = "选择 Rance10.exe，之后可直接在修改器中启用 HP 保护。",
@@ -233,11 +239,15 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
                 var cards = bridge.Features.GetValueOrDefault(FeatureId.NoDuplicateCards) ?? new();
                 features[FeatureId.NoDuplicateCards] = cards with { CanEdit=ready && !_recovering && cards.CanEdit,
                     Active=ready && !_recovering && cards.Active, Help=FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help };
-                foreach (var id in new[] { FeatureId.Redraw, FeatureId.Redistribute, FeatureId.Resources }.Concat(BridgeTrainerRuntime.ValueFeatures.Keys))
+                var componentRows = BridgeTrainerRuntime.ComponentFeatures.Keys.Where(id => id is not (FeatureId.Hp or FeatureId.NoDuplicateCards))
+                    .Concat(BridgeTrainerRuntime.ValueFeatures.Keys).Concat([FeatureId.PlayerHp, FeatureId.EnemyHp]);
+                foreach (var id in componentRows)
                 {
                     var item=bridge.Features.GetValueOrDefault(id) ?? new();
-                    features[id]=item with { CanEdit=ready && !_recovering && item.CanEdit,
-                        Active=ready && !_recovering && item.Active, Help=FeatureCatalog.Get(id).Help };
+                    bool overridden = id == FeatureId.EnemyHp && EnemyHpOverridden(memory);
+                    features[id]=item with { CanEdit=ready && !_recovering && item.CanEdit && !overridden,
+                        Active=ready && !_recovering && item.Active, Help=FeatureCatalog.Get(id).Help,
+                        Detail=overridden ? "请先关闭敌人濒死或直死" : item.Detail };
                 }
                 if (mismatch || _recovering)
                     foreach (var id in features.Keys.ToArray()) features[id] = features[id] with { CanEdit = false, Active = false, LockActive = false };
@@ -247,6 +257,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
                     LoadEpoch = ready && !_recovering && !mismatch ? bridge.LoadEpoch : null,
                     CardManagementAvailable = ready && !_recovering && !mismatch && bridge.CardManagementAvailable,
                     CardContext = ready && !_recovering && !mismatch ? bridge.CardContext : 0,
+                    Battle = ready && !_recovering && !mismatch ? bridge.Battle : null,
                     Connection = _recovering ? ConnectionState.RestorePending : mismatch ? ConnectionState.Loading : memory.Connection,
                     Status = _recovering ? "正在恢复修改" : mismatch ? "正在重新连接游戏" : memory.Status,
                     Error = _recoveryError ?? memory.Error,

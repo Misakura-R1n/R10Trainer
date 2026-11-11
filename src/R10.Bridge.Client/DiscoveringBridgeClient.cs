@@ -89,6 +89,9 @@ public sealed class DiscoveringBridgeClient : IBridgeClient
     public Task<BridgeCommand> SetValueForSessionAsync(string session, string feature, int value, long generation, CancellationToken cancellationToken = default) =>
         WithClientAsync(RequireSession(session), client => client.SetValueForSessionAsync(session, feature, value, generation, cancellationToken), cancellationToken);
 
+    public Task<BridgeCommand> SetBattleHpForSessionAsync(string session, long generation, int context, int side, int value, CancellationToken cancellationToken = default) =>
+        WithClientAsync(RequireSession(session), client => client.SetBattleHpForSessionAsync(session, generation, context, side, value, cancellationToken), cancellationToken);
+
     public Task<BridgeCommand> ActionForSessionAsync(string session, int action, int argument, int argument2, long generation, CancellationToken cancellationToken = default) =>
         WithClientAsync(RequireSession(session), client => client.ActionForSessionAsync(session, action, argument, argument2, generation, cancellationToken), cancellationToken);
 

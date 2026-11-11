@@ -70,7 +70,7 @@ internal static class Program
         tick(3,1,0); tick(1,16,16);
         Check(Request(Action(2,5005)).GetProperty("error").GetString()=="generation_mismatch", "semantic stale generation rejected");
         Check(!Request(Action(4,7,0,3)).GetProperty("ok").GetBoolean() && !Request(Action(2,9999,0,3)).GetProperty("ok").GetBoolean(), "semantic argument bounds enforced natively");
-        var expiry=Request(Action(2,5005,0,3)).GetProperty("id").GetInt32(); Thread.Sleep(3010); tick(1,16,16);
+        var expiry=Request(Action(2,5005,0,3)).GetProperty("id").GetInt32(); Thread.Sleep(3050); tick(1,16,16);
         Check(Request($"{{\"op\":\"get_command_result\",\"id\":{expiry}}}").GetProperty("state").GetString()=="rejected", "unconsumed action expires without later execution");
         var cards=Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Cards"));
         string CardsRequest(bool enable,int gen=3) => JsonSerializer.Serialize(new { op="set_feature",feature="no_duplicate_cards",enabled=enable,generation=gen });
@@ -144,6 +144,7 @@ internal static class Program
         Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=stale})).GetProperty("state").GetString()=="rejected" && data(0,0,0)==0,"load invalidates queued data command");
         Check(!Request("{\"op\":\"get_state\"}").GetProperty("dataReady").GetBoolean(),"load clears data snapshot readiness");
         TestCardManagement(Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"CardEdit")));
+        TestBattleFeatures(Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Battle")));
         Console.WriteLine($"{checks-failed} passed, {failed} failed native helper checks; simulation=true; this is not a game compatibility test.");
         return failed==0 ? 0 : 1;
     }
@@ -191,6 +192,76 @@ internal static class Program
         tick(2,1,0); tick(1,16,16);
         Check(Context()==0 && edit(1,0,0)==0 && Result(oldSave).GetProperty("state").GetString()=="rejected",
             "loading cancels card commands and clears card readiness");
+    }
+
+    private static void TestBattleFeatures(Call battle)
+    {
+        const int generation = 7;
+        const int vmContext = 123;
+        JsonElement State() => Request("{\"op\":\"get_state\"}");
+        int Context() => State().GetProperty("battleContext").GetInt32();
+        JsonElement Toggle(string feature, bool enabled) =>
+            Request(JsonSerializer.Serialize(new { op = "set_feature", feature, generation, enabled }));
+        JsonElement Hp(int context, int argument, int value) =>
+            Request(JsonSerializer.Serialize(new { op = "set_battle_hp", generation, context, argument, value }));
+        string? Result(int id) => Request(JsonSerializer.Serialize(new { op = "get_command_result", id }))
+            .GetProperty("state").GetString();
+
+        tick(3,1,0); tick(1,16,16);
+        Check(Toggle("ap_full", true).GetProperty("error").GetString() == "script_hook_unavailable",
+            "older player component rejects new battle features");
+        tick(0,1,2031); tick(1,16,16);
+        foreach (var (name, bit) in new[] { ("ap_full", 1), ("unlimited_skills", 2), ("status_immunity", 4),
+                     ("repeat_actions", 8), ("unlimited_actions", 16) })
+        {
+            int id = Toggle(name, true).GetProperty("id").GetInt32();
+            tick(1,16,16);
+            Check(Result(id) == "applied" && State().GetProperty("battleRules").GetInt32() == bit &&
+                battle(0,bit,vmContext) == 0, "battle rule is independent and waits for the ordinary battle");
+            battle(1,vmContext,0);
+            Check(battle(0,bit,vmContext) == 1 && battle(0,bit,vmContext+1) == 0,
+                "enabled battle rule binds the live ordinary battle");
+            int disabled = Toggle(name, false).GetProperty("id").GetInt32();
+            tick(1,16,16);
+            Check(Result(disabled) == "applied" && battle(0,bit,vmContext) == 0, "battle rule closes independently");
+            battle(2,0,0);
+        }
+
+        battle(1,vmContext,0); tick(20,10,1); control(5,1,20);
+        battle(3,6,6); tick(10,75,100); tick(11,75,500);
+        var state = State();
+        Check(state.GetProperty("ordinaryBattle").GetBoolean() && state.GetProperty("ap").GetInt32() == 6 &&
+            state.GetProperty("enemyHpMax").GetInt32() == 500, "battle snapshot reports AP and both HP limits");
+        int context = Context();
+        Check(Hp(context, 2, 25).GetProperty("error").GetString() == "invalid_battle_hp" &&
+            Hp(context, 1, 0).GetProperty("error").GetString() == "invalid_battle_hp", "battle HP rejects invalid sides and zero");
+        int id1 = Hp(context, 1, 25).GetProperty("id").GetInt32();
+        Check(Task.Run(() => battle(4,0,0)).GetAwaiter().GetResult() == 0 && battle(4,0,0) == 2 &&
+            battle(4,0,0) == 0 && battle(5,0,0) == 25, "battle HP pins a single game-thread claim and its exact argument");
+        battle(6,25,0);
+        Check(Result(id1) == "applied", "battle HP requires exact game readback");
+        int id2 = Hp(context, 0, 25).GetProperty("id").GetInt32();
+        battle(4,0,0); battle(6,50,0);
+        Check(Result(id2) == "rejected", "battle HP mismatched readback is rejected");
+        int stale = Hp(context, 1, 30).GetProperty("id").GetInt32();
+        battle(7,vmContext,0); control(5,1,20);
+        tick(1,16,16);
+        Check(Context() != context && Result(stale) == "rejected" && battle(4,0,0) == 0 &&
+            Hp(context,1,30).GetProperty("error").GetString() == "battle_context_changed",
+            "an in-place enemy change invalidates old HP requests");
+        int leaving = Hp(Context(),0,30).GetProperty("id").GetInt32();
+        int claimed = battle(4,0,0);
+        battle(2,0,0);
+        Check(claimed == 1 && battle(5,0,0) == 0, "battle exit invalidates the executing HP target");
+        battle(6,30,0);
+        int next = Toggle("ap_full", false).GetProperty("id").GetInt32();
+        tick(1,16,16);
+        Check(Result(leaving) == "rejected" && Result(next) == "applied",
+            "finishing an HP edit after battle exit releases the command slot");
+        battle(1,vmContext,0); tick(20,10,1); control(5,1,20);
+        int pending = Hp(Context(),0,30).GetProperty("id").GetInt32();
+        tick(2,1,0); tick(1,16,16);
+        Check(Context() == 0 && Result(pending) == "rejected", "readiness and pending HP are cleared on load");
     }
     private static void Check(bool condition,string message)
     { checks++; if (!condition) failed++; Console.WriteLine((condition ? "PASS " : "FAIL ")+message); }

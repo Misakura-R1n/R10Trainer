@@ -7,6 +7,30 @@ static class ConfirmationTests
 {
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("battle HP draft is bound to the displayed battle and current limit", async () =>
+        {
+            var epoch = new GameLoadEpoch(42, "42:original", 3, true);
+            var first = new BattleEditContext(epoch, 7);
+            var next = first with { Id = 8 };
+            var runtime = new Fixture(epoch);
+            runtime.Current = runtime.Current with { Battle = first };
+            var vm = new FeatureViewModel(FeatureCatalog.Get(FeatureId.EnemyHp), runtime, _ => { }, _ => Task.FromResult(false));
+            vm.Update(new(Value: 80, Maximum: 100, CanEdit: true), true, first);
+            vm.Draft = "101";
+            vm.ApplyCommand.Execute(null);
+            Check(vm.HasError && runtime.BattleWrite is null);
+            vm.Draft = "75";
+            runtime.Current = runtime.Current with { Battle = next };
+            vm.ApplyCommand.Execute(null);
+            Check(vm.HasError && runtime.BattleWrite is null);
+            vm.Update(new(Value: 60, Maximum: 100, CanEdit: true), true, next);
+            Check(vm.Draft == "60");
+            vm.Draft = "70";
+            var done = Completion(vm);
+            vm.ApplyCommand.Execute(null);
+            await done.WaitAsync(TimeSpan.FromSeconds(3));
+            Check(runtime.BattleWrite == (next, 70m) && !vm.HasError);
+        });
         await test("star confirmation rejects load, restart, unavailable context and changed process", async () =>
         {
             var epoch = new GameLoadEpoch(42, "42:original", 3, true);
@@ -98,6 +122,7 @@ static class ConfirmationTests
         public TrainerSnapshot Current { get; set; } = TrainerSnapshot.Empty with
         { ProcessId = epoch.ProcessId, LoadEpoch = epoch, CardManagementAvailable = true, CardContext = 5 };
         internal (CardAccess, CardRequest)? CardWrite;
+        internal (BattleEditContext, decimal)? BattleWrite;
         public Task<CardReply> ExecuteCardAsync(CardAccess expected, CardRequest request)
         {
             if (request.Writes) CardWrite = (expected, request);
@@ -113,6 +138,8 @@ static class ConfirmationTests
         { ConditionalWrites++; Expected = expected; return Task.FromResult(OperationResult.Ok); }
         public Task<OperationResult> SetValueAsync(FeatureId id, decimal value)
         { UnconditionalWrites++; return Task.FromResult(OperationResult.Ok); }
+        public Task<OperationResult> SetBattleHpAsync(FeatureId id, decimal value, BattleEditContext expected)
+        { BattleWrite = (expected, value); return Task.FromResult(OperationResult.Ok); }
         public Task StartAsync() => Task.CompletedTask;
         public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => Task.FromResult(OperationResult.Ok);
         public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => Task.FromResult(OperationResult.Ok);

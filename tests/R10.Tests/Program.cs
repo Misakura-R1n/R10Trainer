@@ -21,9 +21,9 @@ internal static class Program
         }
         DataTests.Run(Test);
         PatchTests.Run(Test);
-        Test("Catalog: 18 features, 3 locks, safe numeric boundaries", () =>
+        Test("Catalog: 25 features, 3 locks, safe numeric boundaries", () =>
         {
-            Require(FeatureCatalog.All.Count == 18 && FeatureCatalog.All.Count(f => f.HasLock) == 3);
+            Require(FeatureCatalog.All.Count == 25 && FeatureCatalog.All.Count(f => f.HasLock) == 3);
             Require(FeatureCatalog.ValidValue(FeatureId.DeathRate, 12.5m));
             Require(!FeatureCatalog.ValidValue(FeatureId.DeathRate, 12.55m));
             Require(!FeatureCatalog.ValidValue(FeatureId.Star, 79));
