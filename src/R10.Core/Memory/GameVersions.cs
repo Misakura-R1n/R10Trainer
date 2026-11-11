@@ -2,10 +2,16 @@ using System.Text.Json;
 
 namespace R10.Core.Memory;
 
+public sealed record GameAinIdentity(int Length, string Sha256)
+{
+    internal string Fingerprint => "bridge-v1:" + Sha256;
+}
+
 public sealed record GameVersion(string Id, string Name, string ExeSha256, string SourceSha256,
     string SourcePlainSha256, string TargetPlainSha256, int TargetPlainLength)
 {
     internal string BridgeFingerprint => "bridge-v1:" + TargetPlainSha256;
+    public IReadOnlyList<GameAinIdentity> PreviousTargets { get; init; } = [];
 }
 
 public static class GameVersions

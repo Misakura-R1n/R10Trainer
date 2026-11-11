@@ -8,6 +8,8 @@
 #define CARD_CAPABILITY 512
 #define BATTLE_CAPABILITY 1024
 #define CARD_CP932 2048
+#define EXTRA_TREASURE_PICK_CAPABILITY 8192
+#define EXTRA_TREASURE_PICK 20
 #define CARD_PAGE_SIZE 32
 #define CARD_ROW_LIMIT 4096
 #define CARD_TEXT_BYTES 64
@@ -35,7 +37,7 @@ typedef struct {
     LONG blockedHits, lastRequestedHp, lastCommandId, lastCommandState;
     LONG pendingId, nextId;
     LONG noDuplicateCards, cardBatch, cardBatchEnabled, filteredCards, fallbackCards;
-    LONG foodRedraw, autoRedistribute;
+    LONG foodRedraw, autoRedistribute, extraTreasurePick;
     LONG resourcesFull, dataReady, food, medal, friendship, unit;
     LONG cardReady, cardContext;
     LONG selector, controlEnabled, battleReady; DWORD battleTick;
@@ -66,13 +68,18 @@ static int equal(const char *a, const char *b) {
 }
 static int cardCommand(LONG kind) { return kind>=CARD_PAGE && kind<=CARD_SET_STAR; }
 static int battleToggle(LONG kind) { return kind>=BATTLE_AP_FULL && kind<=BATTLE_UNLIMITED_ACTIONS; }
-static LONG capability(LONG kind) { return cardCommand(kind) ? CARD_CAPABILITY : kind==BATTLE_HP || battleToggle(kind) ? BATTLE_CAPABILITY : kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : kind==8 || kind==9 ? 256 : 16; }
+static LONG capability(LONG kind) {
+    if (kind==EXTRA_TREASURE_PICK) return EXTRA_TREASURE_PICK_CAPABILITY;
+    return cardCommand(kind) ? CARD_CAPABILITY : kind==BATTLE_HP || battleToggle(kind) ? BATTLE_CAPABILITY :
+        kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : kind==8 || kind==9 ? 256 : 16;
+}
 static LONG featureCommand(const char *name) {
     if (equal(name,"ap_full")) return BATTLE_AP_FULL;
     if (equal(name,"unlimited_skills")) return BATTLE_UNLIMITED_SKILLS;
     if (equal(name,"status_immunity")) return BATTLE_IMMUNITY;
     if (equal(name,"repeat_actions")) return BATTLE_REPEAT;
     if (equal(name,"unlimited_actions")) return BATTLE_UNLIMITED_ACTIONS;
+    if (equal(name,"extra_treasure_pick")) return EXTRA_TREASURE_PICK;
     return equal(name,"resources_full") ? 9 : equal(name,"no_duplicate_cards") ? 5 :
         equal(name,"food_redraw") ? 6 : equal(name,"auto_redistribute") ? 7 : equal(name,"hp_guard") ? 1 : 0;
 }
@@ -249,6 +256,7 @@ static void respond(const char *input, char *out) {
     p=put(p,snapshot.noDuplicateCards ? ",\"noDuplicateCards\":true" : ",\"noDuplicateCards\":false");
     p=put(p,snapshot.foodRedraw ? ",\"foodRedraw\":true" : ",\"foodRedraw\":false");
     p=put(p,snapshot.autoRedistribute ? ",\"autoRedistribute\":true" : ",\"autoRedistribute\":false");
+    p=put(p,snapshot.extraTreasurePick ? ",\"extraTreasurePick\":true" : ",\"extraTreasurePick\":false");
     p=put(p,snapshot.resourcesFull ? ",\"resourcesFull\":true" : ",\"resourcesFull\":false");
     p=put(p,snapshot.dataReady ? ",\"dataReady\":true" : ",\"dataReady\":false");
     p=field(p,",\"cardContext\":",snapshot.cardReady ? snapshot.cardContext : 0);
@@ -359,6 +367,7 @@ int __cdecl Tick(int marker,int a,int b) {
         else if (c->kind==5) { state.noDuplicateCards=c->enabled; c->state=2; }
         else if (c->kind==6) { state.foodRedraw=c->enabled; c->state=2; }
         else if (c->kind==7) { state.autoRedistribute=c->enabled; c->state=2; }
+        else if (c->kind==EXTRA_TREASURE_PICK) { state.extraTreasurePick=c->enabled; c->state=2; }
         else if (c->kind==9 && !c->enabled) { state.resourcesFull=0; c->state=2; }
         else if (c->kind==1 && state.scriptVersion==1 && (state.capabilities & 4)) { state.hpGuard=c->enabled; c->state=2; }
         else if (battleToggle(c->kind)) {
@@ -455,7 +464,8 @@ int __cdecl Feature(int kind,int a,int b) {
     if (initialized!=2 || GetCurrentThreadId()!=state.gameThreadId) return 0;
     EnterCriticalSection(&gate);
     int result=state.phase==1 && state.scriptVersion==1 && (state.capabilities & capability(kind)) &&
-        ((kind==6 && state.foodRedraw) || (kind==7 && state.autoRedistribute));
+        ((kind==6 && state.foodRedraw) || (kind==7 && state.autoRedistribute) ||
+         (kind==EXTRA_TREASURE_PICK && state.extraTreasurePick));
     LeaveCriticalSection(&gate); return result;
 }
 

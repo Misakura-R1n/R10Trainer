@@ -92,14 +92,26 @@ internal static class Program
         var feature=Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Feature"));
         string SetFeature(string name,bool enabled,int gen=4) => JsonSerializer.Serialize(new {op="set_feature",feature=name,enabled,generation=gen});
         Check(Request(SetFeature("food_redraw",true)).GetProperty("error").GetString()=="script_hook_unavailable","old script rejects new branch switches");
-        tick(0,1,255); tick(1,16,16);
+        Check(Request(SetFeature("extra_treasure_pick",true)).GetProperty("error").GetString()=="script_hook_unavailable","old script rejects extra treasure picks");
+        tick(0,1,255|8192); tick(1,16,16);
         Request(SetFeature("food_redraw",true)); Check(feature(6,0,0)==0,"queued redraw does not alter script branch");
         tick(1,16,16); Check(feature(6,0,0)==1 && feature(7,0,0)==0,"redraw enabled independently");
         Check(Task.Run(()=>feature(6,0,0)).GetAwaiter().GetResult()==0,"background thread cannot query script feature");
         Request(SetFeature("auto_redistribute",true)); tick(1,16,16);
         Request(SetFeature("food_redraw",false)); tick(1,16,16);
         Check(feature(6,0,0)==0 && feature(7,0,0)==1,"disabling redraw preserves redistribution");
+        Request(SetFeature("extra_treasure_pick",true));
+        Check(feature(20,0,0)==0,"queued extra treasure pick is inactive");
+        tick(1,16,16);
+        Check(feature(20,0,0)==1 && Request("{\"op\":\"get_state\"}").GetProperty("extraTreasurePick").GetBoolean(),
+            "game thread applies and reports extra treasure pick");
+        Request(SetFeature("extra_treasure_pick",false)); tick(1,16,16);
+        Check(feature(20,0,0)==0 && feature(7,0,0)==1,"turning off the extra pick preserves redistribution");
+        int stalePick=Request(SetFeature("extra_treasure_pick",true)).GetProperty("id").GetInt32();
         tick(2,1,5005); Check(feature(7,0,0)==0,"loading suspends branch switches");
+        tick(1,16,16);
+        Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=stalePick})).GetProperty("state").GetString()=="rejected"
+            && feature(20,0,0)==0,"load rejects pending extra treasure pick from the old generation");
         Check(Request(SetFeature("auto_redistribute",false)).GetProperty("error").GetString()=="generation_mismatch","old generation cannot change branch switches");
         tick(3,1,0); tick(0,1,63); Check(feature(7,0,0)==0,"removed capability cannot retain active script effect");
         var data=Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Data"));

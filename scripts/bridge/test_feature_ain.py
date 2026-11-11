@@ -5,6 +5,7 @@ import struct
 import unittest
 import zlib
 import build_instrumented_ain as builder
+from ain_profiles import LAYOUTS, VERSION_BY_SOURCE
 
 
 class FeatureTests(unittest.TestCase):
@@ -13,15 +14,31 @@ class FeatureTests(unittest.TestCase):
         raw, report, _ = builder.build(SOURCE.read_bytes(), 'full')
         cls.code = zlib.decompress(raw[16:])[16:16 + report['newCodeLength']]
 
-    def run_site(self, pc, width, enabled, delegate_done=False):
-        original_pc=pc; stack=['caller-context']; calls=[]
+    def run_site(self, pc, width, enabled, delegate_done=False, *, code=None, stack=None, members=None, continuations=()):
+        code = self.code if code is None else code
+        stack = ['caller-context'] if stack is None else stack
+        members = {} if members is None else members
+        ends = {pc + width, *continuations}
+        calls = []
         for _ in range(30):
-            if pc == original_pc + width or pc in (0x3E4B44, 0x3E4BA4):
+            if pc in ends:
                 return pc,stack,calls
-            op=struct.unpack_from('<H',self.code,pc)[0];pc+=2
-            n={0:1,0x2C:1,0x2D:1,0x5A:3,0xF4:2}[op]
-            args=struct.unpack_from('<'+'i'*n,self.code,pc);pc+=4*n
+            op=struct.unpack_from('<H',code,pc)[0];pc+=2
+            n={0:1,0x01:0,0x02:0,0x09:0,0x18:0,0x19:0,0x2C:1,0x2D:1,0x5A:3,0x5B:0,0xF4:2}[op]
+            args=struct.unpack_from('<'+'i'*n,code,pc);pc+=4*n
             if op==0:stack.append(args[0])
+            elif op==0x01: stack.pop()
+            elif op==0x02:
+                field=stack.pop()
+                self.assertEqual(stack.pop(),'selector')
+                stack.append(members[field])
+            elif op==0x09: stack.append(stack.pop()+stack.pop())
+            elif op==0x18: stack.append(stack.pop()==stack.pop())
+            elif op==0x19:
+                value, field = stack.pop(), stack.pop()
+                self.assertEqual(stack.pop(),'selector')
+                members[field] = value
+                stack.append(value)
             elif op==0x2C:pc=args[0]
             elif op==0x2D:
                 if not stack.pop():pc=args[0]
@@ -29,6 +46,7 @@ class FeatureTests(unittest.TestCase):
                 self.assertEqual(args,(36,4,-1))
                 b,a,kind=stack.pop(),stack.pop(),stack.pop()
                 self.assertEqual((a,b),(0,0));calls.append(kind);stack.append(enabled)
+            elif op==0x5B: stack.append('selector')
             elif op==0xF4:
                 self.assertEqual(args[0],0x435);calls.append('delegate')
                 if delegate_done:pc=args[1]
@@ -48,11 +66,46 @@ class FeatureTests(unittest.TestCase):
         for enabled in (False,True):
             for done in (False,True):
                 target=(0x3E4BA4 if enabled else 0x3E4B44) if done else 0x3E4B3E
-                self.assertEqual(self.run_site(0x3E4B34,10,enabled,done),
+                self.assertEqual(self.run_site(0x3E4B34,10,enabled,done,continuations=(0x3E4B44, 0x3E4BA4)),
                                  (target,['caller-context'],[7,'delegate']))
 
+    def test_extra_pick_updates_both_counts_with_one_switch_read(self):
+        for enabled in (False, True):
+            for initial_limit in (1, 2):
+                for candidate_count in (2, 3):
+                    with self.subTest(enabled=enabled, initial_limit=initial_limit, candidate_count=candidate_count):
+                        members = {2: candidate_count}
+                        result = self.run_site(0x3ACB0A, 6, enabled,
+                            stack=['caller-context', 'selector', 6, initial_limit], members=members)
+                        self.assertEqual(result, (0x3ACB10, ['caller-context', 'selector'], [20]))
+                        self.assertEqual(members, {2: 3 if enabled else candidate_count, 6: initial_limit + enabled})
+
+    def test_extra_pick_preserves_existing_game_bonus_branch(self):
+        checked = 0
+        for path in COMPATIBILITY_SOURCES:
+            raw = path.read_bytes()
+            version = VERSION_BY_SOURCE[builder.sha(raw)]
+            if not LAYOUTS[version['id']].has_extra_treasure_bonus:
+                continue
+            checked += 1
+            generated, report, _ = builder.build(raw, 'full')
+            self.assertTrue(report['capabilities'] & 8192)
+            code = zlib.decompress(generated[16:])[16:16 + report['newCodeLength']]
+            for game_bonus in (False, True):
+                for enabled in (False, True):
+                    with self.subTest(version=version['id'], game_bonus=game_bonus, enabled=enabled):
+                        effective = game_bonus or enabled
+                        members = {2: 2}
+                        result = self.run_site(0x3ACB00, 6, enabled, code=code, continuations=(0x3ACB0C,),
+                            stack=['caller-context', 'selector', 6, 'game-context', game_bonus], members=members)
+                        self.assertEqual(result, (0x3ACB0C if effective else 0x3ACB06,
+                            ['caller-context', 'selector', 6, 'game-context'], [20]))
+                        self.assertEqual(members, {2: 3 if effective else 2})
+        if not checked:
+            self.skipTest('No input with the original treasure pick bonus')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--source',type=Path,required=True)
-    args,remaining=parser.parse_known_args();SOURCE=args.source
+    parser.add_argument('--compatibility-source',type=Path,action='append',default=[])
+    args,remaining=parser.parse_known_args();SOURCE=args.source;COMPATIBILITY_SOURCES=args.compatibility_source
     unittest.main(argv=['test_feature_ain',*remaining],verbosity=2)

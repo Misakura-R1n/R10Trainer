@@ -70,6 +70,17 @@ static class RuntimeTests
             Check((await runtime.TryCloseAsync()).Success);
             Check(client.FeatureWrites.SequenceEqual(new[]{"hp_guard:True","hp_guard:False"}));
         });
+        await test("extra treasure pick needs its hook and closes independently of other card rules", async () =>
+        {
+            var client = new RuntimeFixture { State = Ready() with { Capabilities = 47, NoDuplicateCards = true } };
+            var runtime = new BridgeTrainerRuntime(client);
+            Check(!(await runtime.SetToggleAsync(FeatureId.ExtraTreasurePick, true)).Success && client.Writes.Count == 0);
+            client.State = client.State with { Capabilities = 47 | BridgeState.ExtraTreasurePickCapability };
+            Check((await runtime.SetToggleAsync(FeatureId.ExtraTreasurePick, true)).Success);
+            Check(runtime.Current.Features[FeatureId.ExtraTreasurePick].Active && runtime.Current.Features[FeatureId.ExtraTreasurePick].CanEdit);
+            Check((await runtime.TryCloseAsync()).Success && !client.State.ExtraTreasurePick && client.State.NoDuplicateCards);
+            Check(client.FeatureWrites.SequenceEqual(new[] { "extra_treasure_pick:True", "extra_treasure_pick:False" }));
+        });
         await test("card capability, ownership and HP close independently", async () =>
         {
             var client=new RuntimeFixture(); var runtime=new BridgeTrainerRuntime(client);
@@ -256,6 +267,7 @@ static class RuntimeTests
                 "hp_guard"=>State with { HpGuard=enabled }, "no_duplicate_cards"=>State with { NoDuplicateCards=enabled },
                 "resources_full"=>State with { ResourcesFull=enabled },
                 "food_redraw"=>State with { FoodRedraw=enabled }, "auto_redistribute"=>State with { AutoRedistribute=enabled },
+                "extra_treasure_pick"=>State with { ExtraTreasurePick=enabled },
                 _=>throw new InvalidOperationException("Unknown fixture feature") };
             return Task.FromResult(new BridgeCommand(Writes.Count, "applied"));
         }

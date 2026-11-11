@@ -16,6 +16,7 @@ import subprocess
 import sys
 import zlib
 from ain_profiles import LAYOUTS, ROOT, SECTION_BOUNDS, VERSIONS, VERSION_BY_SOURCE
+from feature_ain import EXTRA_TREASURE_PICK_CAPABILITY, install_extra_treasure_pick, install_features
 
 ARTIFACTS = ROOT / "artifacts"
 SOURCE_SHA = VERSIONS[0]["sourceSha256"]
@@ -266,6 +267,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     hooks = [dict(hook) for hook in HOOKS]
     capabilities = 2047 if profile == "controls" else 2031 if profile == "full" else 1
     if profile in {"full", "controls"}:
+        capabilities |= EXTRA_TREASURE_PICK_CAPABILITY
         if layout.code_page == 932:
             capabilities |= 2048
         if layout.patch_managed_rerolls:
@@ -372,8 +374,12 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         from cards_ain import install_cards
         install_cards(add_function, replace_code, instruction, at)
         if not layout.patch_managed_rerolls:
-            from feature_ain import install_features
             install_features(add_function, replace_code, instruction, at)
+        selector = functions[0x6041]
+        entry = selector["address"]
+        require(selector["name"] == b"SceneGetCard@0" and selector["args"] == 4 and
+                code[entry - 6:entry] == instruction("FUNC", 0x6041), "Unexpected card selector constructor")
+        install_extra_treasure_pick(add_function, replace_code, instruction, entry, layout.has_extra_treasure_bonus)
         from data_ain import install_data
         hooks[1]["data"] = install_data(add_function)
         from card_management_ain import install_card_management

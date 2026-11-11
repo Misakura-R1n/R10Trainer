@@ -49,6 +49,8 @@ public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, lon
     public int CardContext { get; init; }
     public bool FoodRedraw { get; init; }
     public bool AutoRedistribute { get; init; }
+    public const int ExtraTreasurePickCapability = 8192;
+    public bool ExtraTreasurePick { get; init; }
     public bool FoodRedrawAvailable => (Capabilities.GetValueOrDefault() & 64) != 0;
     public bool AutoRedistributeAvailable => (Capabilities.GetValueOrDefault() & 128) != 0;
     public bool PatchManagesRerolls => (Capabilities.GetValueOrDefault() & 4096) != 0;

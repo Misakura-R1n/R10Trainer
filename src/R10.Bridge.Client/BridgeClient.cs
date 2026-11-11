@@ -40,6 +40,7 @@ public sealed class BridgeClient : IBridgeClient
             NullableNonnegativeInteger(response, "lastCompletedGeneration"), NullableNonnegativeInteger(response, "lastLoadOutcome"))
         { ResourcesFull = response.TryGetProperty("resourcesFull", out var full) && full.ValueKind == JsonValueKind.True, DataReady = response.TryGetProperty("dataReady", out var data) && data.ValueKind == JsonValueKind.True, Food=NullableInteger(response,"food"), Medal=NullableInteger(response,"medal"), Friendship=NullableInteger(response,"friendship"), Unit=NullableInteger(response,"unit"), FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True,
             CardContext = response.TryGetProperty("cardContext", out _) ? BoundedInteger(response, "cardContext", int.MaxValue) : 0,
+            ExtraTreasurePick = response.TryGetProperty("extraTreasurePick", out _) && Boolean(response, "extraTreasurePick"),
             OrdinaryBattle = response.TryGetProperty("ordinaryBattle", out _) && Boolean(response, "ordinaryBattle"),
             BattleContext = response.TryGetProperty("battleContext", out _) ? BoundedInteger(response, "battleContext", int.MaxValue) : 0,
             BattleRules = response.TryGetProperty("battleRules", out _) ? (BattleRules)BoundedInteger(response, "battleRules", int.MaxValue) : BattleRules.None,
@@ -103,7 +104,7 @@ public sealed class BridgeClient : IBridgeClient
 
     public async Task<BridgeCommand> SetFeatureAsync(string feature, bool enabled, long generation, CancellationToken cancellationToken = default)
     {
-        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute" or "resources_full"
+        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute" or "resources_full" or "extra_treasure_pick"
             or "ap_full" or "unlimited_skills" or "status_immunity" or "repeat_actions" or "unlimited_actions"))
             throw new BridgeException("unsupported_feature", "Unsupported bridge feature.");
         if (generation < 0) throw new ArgumentOutOfRangeException(nameof(generation));

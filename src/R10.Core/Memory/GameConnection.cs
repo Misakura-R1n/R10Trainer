@@ -16,16 +16,11 @@ public sealed class GameConnection : IDisposable
     public static readonly string SupportedBridgeAinPlainHash = GameVersions.BugFix.TargetPlainSha256;
     public static readonly string SupportedBridgeAinFingerprint = GameVersions.BugFix.BridgeFingerprint;
     public static readonly int SupportedBridgeAinPlainLength = GameVersions.BugFix.TargetPlainLength;
-    public const uint SupportedBridgeCodeLength = 14582408;
-    private static readonly (int Length, string Fingerprint)[] LegacyBridgeAinIdentities =
-    [
-        (28727376, "bridge-v1:6016DF12F4F8C47C596AF8A7951C6149201768CF3996CA0C49D1E13D2FE12D4A"),
-        (28727376, "bridge-v1:6FDB129167C8FAD210168D3E6EFF8D398001AE397D84D535A741CF961047A06F"),
-        (28727422, "bridge-v1:C0989948D8B10CCDFC5638A77FEF3E44B0F100AA92C609915F5DE361BB7007EC"),
-        (28724545, "bridge-v1:7C674704D331F697339643A541958B259B8B7179D72346CA9C573F5A4B5829AF")
-    ];
-    private static readonly (int Length, string Fingerprint)[] BridgeAinIdentities =
-        [.. GameVersions.All.Select(version => (version.TargetPlainLength, version.BridgeFingerprint)), .. LegacyBridgeAinIdentities];
+    public const uint SupportedBridgeCodeLength = 14582520;
+    private static readonly (string ExeSha256, int Length, string Fingerprint)[] BridgeAinIdentities =
+        [.. GameVersions.All.SelectMany(version => version.PreviousTargets
+            .Select(target => (version.ExeSha256, target.Length, target.Fingerprint))
+            .Prepend((version.ExeSha256, version.TargetPlainLength, version.BridgeFingerprint)))];
     private readonly FileStream? _exe, _ain;
     public IProcessMemory Memory { get; }
     public string AinPath { get; }
@@ -101,9 +96,8 @@ public sealed class GameConnection : IDisposable
     public static bool IsSupportedGameVersion(string exeHash, string fingerprint, bool allowBridge = true)
     {
         if (!allowBridge) return Matches(exeHash, SupportedExeHash) && Matches(fingerprint, SupportedAinHash);
-        return GameVersions.All.Any(version => Matches(exeHash, version.ExeSha256) &&
-                   (Matches(fingerprint, version.SourceSha256) || Matches(fingerprint, version.BridgeFingerprint))) ||
-               (Matches(exeHash, SupportedExeHash) && LegacyBridgeAinIdentities.Any(item => Matches(item.Fingerprint, fingerprint)));
+        return GameVersions.All.Any(version => Matches(exeHash, version.ExeSha256) && Matches(fingerprint, version.SourceSha256)) ||
+               BridgeAinIdentities.Any(item => Matches(exeHash, item.ExeSha256) && Matches(item.Fingerprint, fingerprint));
     }
     private static bool Matches(string left, string right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
     internal static bool IsBridgeAinFingerprint(string fingerprint) =>
@@ -140,7 +134,7 @@ public sealed class GameConnection : IDisposable
             }
             if (total != plainLength) return compressedHash;
             string fingerprint = "bridge-v1:" + Convert.ToHexString(hash.GetHashAndReset());
-            return BridgeAinIdentities.Contains((plainLength, fingerprint)) ? fingerprint : compressedHash;
+            return BridgeAinIdentities.Any(item => item.Length == plainLength && item.Fingerprint == fingerprint) ? fingerprint : compressedHash;
         }
         catch (InvalidDataException) { return compressedHash; }
         finally { stream.Position = 0; }

@@ -41,6 +41,7 @@ class AinLayout:
     shifts: tuple[tuple[int, int], ...] = ()
     code_page: int = 936
     patch_managed_rerolls: bool = False
+    has_extra_treasure_bonus: bool = False
 
     def relocate(self, pc):
         for start, displacement in reversed(self.shifts):
@@ -55,11 +56,12 @@ LAYOUTS = {
     "level40-treasure": treasure,
     "treasure": treasure,
     "extra-card": AinLayout(shifted_sections(CODE=234, STR0=28),
-                            ((0x3ACBA8, 98), (0x3E3476, 202), (0x43E2BE, 234))),
+                            ((0x3ACBA8, 98), (0x3E3476, 202), (0x43E2BE, 234)),
+                            has_extra_treasure_bonus=True),
     "combined": AinLayout(shifted_sections(CODE=78, MSG1=-4, STR0=19),
                           ((0x3ACBA8, 98), (0x3B0EC6, 138), (0x3B13C6, 196), (0x3E2BAA, 216),
                            (0x3E328C, 32), (0x3E3476, 142), (0x3E4C88, 46), (0x43E2BE, 78)),
-                          patch_managed_rerolls=True),
+                          patch_managed_rerolls=True, has_extra_treasure_bonus=True),
     "auto-food": AinLayout(shifted_sections(CODE=-86), ((0x3B0EC6, 40), (0x3B13C6, 98), (0x3E328C, -86)),
                            patch_managed_rerolls=True),
     "chinese-original": AinLayout(shifted_sections(CODE=-140, MSG1=1, STR0=-22),

@@ -47,9 +47,12 @@ await Test("set_feature sends exact generation and only queues", async () =>
 {
     var transport = new FixtureTransport(_ => Ok(new { id = 7, state = "queued" }));
     var client = new BridgeClient(42, transport);
-    var command = await client.SetFeatureAsync("hp_guard", true, 3);
-    Check(command.Id == 7 && !command.IsTerminal);
-    Check(transport.Requests.Single().GetRawText() == "{\"op\":\"set_feature\",\"feature\":\"hp_guard\",\"enabled\":true,\"generation\":3}");
+    foreach (string feature in new[] { "hp_guard", "extra_treasure_pick" })
+    {
+        var command = await client.SetFeatureAsync(feature, true, 3);
+        Check(command.Id == 7 && !command.IsTerminal);
+        Check(transport.Requests.Last().GetRawText() == JsonSerializer.Serialize(new { op = "set_feature", feature, enabled = true, generation = 3 }));
+    }
 });
 await Test("typed values validate bounds and bind exact session and generation", async () =>
 {
@@ -131,8 +134,9 @@ await Test("state rejects malformed numeric fields without leaking parsing excep
 await Test("state carries heartbeat freshness and guard counters", async () =>
 {
     var json = JsonNode.Parse(State())!; json["heartbeatAgeMs"] = 2001; json["blockedHits"] = 5; json["lastRequestedHp"] = 0; json["scriptVersion"] = 1; json["capabilities"] = 15;
+    json["extraTreasurePick"] = true;
     var state = await new BridgeClient(42, new FixtureTransport(_ => json.ToJsonString())).GetStateAsync();
-    Check(state.GameThreadResponsive == false && state.BlockedHits == 5 && state.LastRequestedHp == 0 && state.ScriptVersion == 1 && state.HpGuardAvailable);
+    Check(state.GameThreadResponsive == false && state.BlockedHits == 5 && state.LastRequestedHp == 0 && state.ScriptVersion == 1 && state.HpGuardAvailable && state.ExtraTreasurePick);
 });
 await Test("unadvertised HP hook remains unavailable", async () => Check(!(await new BridgeClient(42, new FixtureTransport(_ => State())).GetStateAsync()).HpGuardAvailable));
 await Test("load failure evidence survives ready phase and negative quick-load slot", async () =>

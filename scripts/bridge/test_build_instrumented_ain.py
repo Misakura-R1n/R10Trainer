@@ -353,10 +353,10 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(vm.events, [("tick", 4, 2, 0)])
 
     def test_startup_capabilities_match_full_profile(self):
-        self.assertEqual(self.report["capabilities"], 2031)
+        self.assertEqual(self.report["capabilities"], 10223)
         startup = next(h for h in self.report["hooks"] if h["id"] == 0x47DD)
         prefix = bytes.fromhex(startup["prefixHex"])
-        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 2031))
+        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 10223))
 
     def test_card_management_uses_typed_locals_and_integer_native_abi(self):
         pump = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardManagement")

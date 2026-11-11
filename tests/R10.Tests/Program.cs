@@ -21,9 +21,23 @@ internal static class Program
         }
         DataTests.Run(Test);
         PatchTests.Run(Test);
-        Test("Catalog: 25 features, 3 locks, safe numeric boundaries", () =>
+        Test("Older component scripts retain their verified EXE pairing", () =>
         {
-            Require(FeatureCatalog.All.Count == 25 && FeatureCatalog.All.Count(f => f.HasLock) == 3);
+            foreach (var version in GameVersions.All)
+            {
+                Require(version.PreviousTargets.Count > 0);
+                foreach (var previous in version.PreviousTargets)
+                {
+                    string fingerprint = "bridge-v1:" + previous.Sha256;
+                    Require(GameConnection.IsSupportedGameVersion(version.ExeSha256, fingerprint));
+                    foreach (var other in GameVersions.All.Where(other => other.ExeSha256 != version.ExeSha256))
+                        Require(!GameConnection.IsSupportedGameVersion(other.ExeSha256, fingerprint));
+                }
+            }
+        });
+        Test("Catalog: 26 features, 3 locks, safe numeric boundaries", () =>
+        {
+            Require(FeatureCatalog.All.Count == 26 && FeatureCatalog.All.Count(f => f.HasLock) == 3);
             Require(FeatureCatalog.ValidValue(FeatureId.DeathRate, 12.5m));
             Require(!FeatureCatalog.ValidValue(FeatureId.DeathRate, 12.55m));
             Require(!FeatureCatalog.ValidValue(FeatureId.Star, 79));
