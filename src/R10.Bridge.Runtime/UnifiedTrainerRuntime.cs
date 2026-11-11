@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using R10.Bridge.Client;
 using R10.Core;
+using R10.Core.Data;
 using R10.Core.Memory;
 
 [assembly: InternalsVisibleTo("R10.Bridge.Tests")]
@@ -36,7 +37,15 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
     }
 
     public UnifiedTrainerRuntime(string? gameDirectory = null)
-        : this(gameDirectory, path => (new TrainerRuntime(() => GameConnection.Discover(path)), new BridgeTrainerRuntime(path))) { }
+        : this(gameDirectory, GameConnection.Discover, path => new BridgeTrainerRuntime(path)) { }
+    internal UnifiedTrainerRuntime(string? gameDirectory, Func<string, GameConnection?> discover, Func<string, ITrainerRuntime> createBridge)
+        : this(gameDirectory, CreateRuntimeFactory(discover, createBridge)) { }
+    private static Func<string, (ITrainerRuntime Memory, ITrainerRuntime Bridge)> CreateRuntimeFactory(
+        Func<string, GameConnection?> discover, Func<string, ITrainerRuntime> createBridge)
+    {
+        var dataWriteFaults = new DataWriteFaults();
+        return path => (new TrainerRuntime(() => discover(path), dataWriteFaults), createBridge(path));
+    }
     internal UnifiedTrainerRuntime(string? gameDirectory, Func<string, (ITrainerRuntime Memory, ITrainerRuntime Bridge)> factory)
     {
         _factory = factory;

@@ -10,6 +10,7 @@ public sealed record MemoryRegion(uint BaseAddress, ulong Size, uint State, uint
 public interface IProcessMemory : IDisposable
 {
     int ProcessId { get; }
+    long? ProcessCreationFileTime => null;
     uint ModuleBase { get; }
     bool IsAlive { get; } // Query failures throw; they must never be interpreted as process exit.
     byte[] Read(uint address, int length); // Exact reads/writes only; failures and short I/O throw.

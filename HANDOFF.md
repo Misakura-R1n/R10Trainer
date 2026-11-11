@@ -4,7 +4,7 @@
 
 | 项目 | 当前配置 |
 |---|---|
-| 开发版本 | v0.8.0，C# / .NET 10 / WPF，`win-x86` |
+| 开发版本 | v0.8.0 基线与未发布修复，C# / .NET 10 / WPF，`win-x86` |
 | 游戏版本 | 六种中文补丁、中文原版和日文原版，文件指纹见 [README](README.md#支持范围与限制) |
 | 源码 | 开发分支 `codex/component-optimizations`，默认分支 `codex/initial-import`。[私有仓库 R10Trainer](https://github.com/Misakura-R1n/R10Trainer) |
 | 最近发布 | 玩家包 `R10Trainer-v0.6.3-win-x86.zip`。[v0.6.3](https://github.com/Misakura-R1n/R10Trainer/releases/tag/v0.6.3) |
@@ -45,7 +45,7 @@
 | 卡片管理 | `src/R10.App/ViewModels/CardManagementViewModel.cs`、`src/R10.Bridge.Runtime/CardManagement.cs`、`scripts/bridge/card_management_ain.py`。卡片按版本 ID 获取，★ 按角色 ID 编辑，提交绑定原会话、读档代次及场景。 |
 | 掉落去重 | `scripts/bridge/cards_ain.py`，围绕 `SceneGetCard@CreateCard` 管理同步批次并过滤两个卡池分支 |
 | 重抽、重配与资源等级 | `scripts/bridge/feature_ain.py`、`scripts/bridge/data_ain.py`，切换游戏条件分支并调用游戏的资源和等级方法 |
-| 外部数据与锁定 | `src/R10.Core/Data/R10DataEngine.cs`、`src/R10.Core/GameLoadFence.cs`、`src/R10.Core/TrainerRuntime.cs`，按写入归属与当前阶段检查回滚，读档代次或会话变化取消旧锁 |
+| 外部数据与锁定 | `src/R10.Core/Data/R10DataEngine.cs`、`src/R10.Core/GameLoadFence.cs`、`src/R10.Core/TrainerRuntime.cs`。读档代次或会话变化取消旧锁。`src/R10.Core/Data/DataWriteFaults.cs` 按 PID 和进程创建时间保存未恢复故障，切换连接时沿用。 |
 | AIN 构建、识别和配方 | `src/R10.Core/Memory/GameVersions.json` 固定 EXE 与 AIN 指纹。`scripts/bridge/ain_profiles.py` 维护各版的段边界和调用点位移，`scripts/bridge/export_portable_patch.py` 生成配方。 |
 | MCP 与协议 | `src/R10.Mcp/McpServer.cs`、`src/R10.Mcp/GameInput.cs`、`src/R10.Bridge.Client/BridgeProtocol.cs` |
 
@@ -53,6 +53,7 @@
 
 | 层级 | 本地证据 |
 |---|---|
+| 回滚保护回归 | `artifacts/data-rollback-reselect-build.log`。模拟回滚冲突、同进程重选、存活状态查询失败、切换进程和重启后 PID 复用。 |
 | 0.8.0 多版本离线与临时文件安装恢复 | `artifacts/bridge/v0.8.0-compatibility-build.log`，各版的 AIN 校验产物见 `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/`。覆盖八份脚本及 EXE／AIN 错配拒绝。 |
 | 0.8.0 协议与 x86 辅助进程 | 同一日志记录中文 CP936 与日文 CP932 卡名、两项重抽规则的开关归属及原生回归。安装测试的符号链接用例因 Windows 权限不足跳过。 |
 | 0.8.0 本地玩家包 | `artifacts/bridge/v0.8.0-package-build.log`，包内各配方身份见 `build-info.json`。 |

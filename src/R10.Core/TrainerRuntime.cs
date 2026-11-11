@@ -17,6 +17,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
     private readonly Func<long> _clock;
     private readonly Func<int, Task> _waitForWork;
     private readonly GameLoadFence _loadFence;
+    private readonly DataWriteFaults _dataWriteFaults;
     private long _loadRevision;
     private readonly object _closeGate = new();
     private readonly SemaphoreSlim _wake = new(0, 1);
@@ -44,12 +45,15 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
     public event Action<TrainerSnapshot>? SnapshotChanged;
     public TrainerRuntime(Func<GameConnection?>? connectionFactory = null)
         : this(connectionFactory ?? GameConnection.Discover, (memory, path) => new R10PatchEngine(memory, path)) { }
+    public TrainerRuntime(Func<GameConnection?> connectionFactory, DataWriteFaults dataWriteFaults)
+        : this(connectionFactory, (memory, path) => new R10PatchEngine(memory, path), dataWriteFaults: dataWriteFaults) { }
     internal TrainerRuntime(Func<GameConnection?> connectionFactory, Func<IProcessMemory, string, R10PatchEngine> patchFactory,
-        Func<long>? clock = null, Func<int, Task>? waitForWork = null)
+        Func<long>? clock = null, Func<int, Task>? waitForWork = null, DataWriteFaults? dataWriteFaults = null)
     {
         _discover = connectionFactory; _createPatches = patchFactory;
         _clock = clock ?? (() => Environment.TickCount64);
         _loadFence = new(_clock);
+        _dataWriteFaults = dataWriteFaults ?? new();
         _waitForWork = waitForWork ?? WaitForWorkAsync;
     }
     public void ObserveGameLoad(GameLoadEpoch? epoch) => _loadFence.Update(epoch);
@@ -208,6 +212,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             {
                 _connection = _discover();
                 if (_connection == null) { _state = ConnectionState.Searching; _error = null; return; }
+                _dataFault = _dataWriteFaults.GetForConnection(_connection);
                 _data = new(_connection.Memory); _patches = _createPatches(_connection.Memory, _connection.AinPath);
                 _generation = -1; _stableGame = _stableBattle = 0; _nextFast = _nextSlow = 0; _error = null;
             }
@@ -325,9 +330,10 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
     private void RecordFailure(FeatureId id, Exception ex)
     {
         _errors[id] = ex.Message;
-        if (ex is DataWriteException { RollbackComplete: false })
+        if (ex is DataWriteException { RollbackComplete: false } && _connection is { } connection)
         {
             _dataFault = "部分数据未能确认恢复，已暂停数据写入。请重启游戏后再连接。" + ex.Message;
+            _dataWriteFaults.Record(connection, _dataFault);
             _requested.Clear(); _lockRequested.Clear(); _locks.Clear(); Suspend();
             _state = ConnectionState.Error; _error = _dataFault;
         }
@@ -335,7 +341,9 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
     private void Suspend() { _active.Clear(); _lockActive.Clear(); }
     private void DetachExited()
     {
-        _connection!.Dispose(); _connection = null; _data = null; _patches = null; _scene = null;
+        var connection = _connection!;
+        _dataWriteFaults.ConfirmExit(connection);
+        connection.Dispose(); _connection = null; _data = null; _patches = null; _scene = null;
         _patchWorkRequested = false;
         _requested.Clear(); _lockRequested.Clear(); _locks.Clear(); _errors.Clear(); Suspend();
         _values = new Dictionary<FeatureId, decimal?>(); _state = ConnectionState.Searching; _error = null; _dataFault = null;
@@ -349,6 +357,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             if (_connection != null)
             {
                 if (_connection.Memory.IsAlive) _patches?.RestoreAll();
+                else _dataWriteFaults.ConfirmExit(_connection);
                 _connection.Dispose(); _connection = null;
             }
             _patches = null; _data = null; _scene = null; _closed = true; _state = ConnectionState.Closed; _error = null;

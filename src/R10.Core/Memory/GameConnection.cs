@@ -29,7 +29,12 @@ public sealed class GameConnection : IDisposable
     private readonly FileStream? _exe, _ain;
     public IProcessMemory Memory { get; }
     public string AinPath { get; }
-    public GameConnection(IProcessMemory memory, string ainPath) { Memory = memory; AinPath = ainPath; }
+    internal (int Pid, long? CreationFileTime) ProcessIdentity { get; }
+    public GameConnection(IProcessMemory memory, string ainPath)
+    {
+        Memory = memory; AinPath = ainPath;
+        ProcessIdentity = (memory.ProcessId, memory.ProcessCreationFileTime);
+    }
     private GameConnection(NativeProcessMemory memory, string ainPath, FileStream exe, FileStream ain)
         : this(memory, ainPath) { _exe = exe; _ain = ain; }
     public static GameConnection? Discover() => DiscoverCore(null, false);

@@ -9,6 +9,7 @@ public sealed class NativeProcessMemory : IProcessMemory
 {
     private nint _handle;
     public int ProcessId { get; }
+    public long? ProcessCreationFileTime { get; }
     public uint ModuleBase { get; }
     public string ExecutablePath { get; }
     public bool IsAlive
@@ -37,6 +38,7 @@ public sealed class NativeProcessMemory : IProcessMemory
             using var process = Process.GetProcessById(processId);
             if (!GetProcessTimes(_handle, out long creation, out _, out _, out _)) throw Error("检查进程身份");
             if (process.StartTime.ToUniversalTime().ToFileTimeUtc() != creation) throw new IOException("进程已被替换，请重新连接。");
+            ProcessCreationFileTime = creation;
             var module = process.MainModule ?? throw new IOException("未找到游戏主模块。");
             ModuleBase = unchecked((uint)module.BaseAddress.ToInt64());
             if (!IsAlive || ModuleBase == 0 || !string.Equals(module.FileName, ExecutablePath, StringComparison.OrdinalIgnoreCase))

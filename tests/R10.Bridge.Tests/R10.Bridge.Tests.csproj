@@ -5,5 +5,6 @@
     <Compile Include="../../src/R10.App/ViewModels/FeatureViewModel.cs" Link="App/FeatureViewModel.cs" />
     <Compile Include="../../src/R10.App/ViewModels/CardManagementViewModel.cs" Link="App/CardManagementViewModel.cs" />
     <Compile Include="../../src/R10.App/ViewModels/ObservableObject.cs" Link="App/ObservableObject.cs" />
+    <Compile Include="../R10.Tests/DataFixture.cs" Link="DataFixture.cs" />
   </ItemGroup>
 </Project>

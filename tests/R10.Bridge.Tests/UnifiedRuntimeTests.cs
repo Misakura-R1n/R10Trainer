@@ -1,5 +1,7 @@
 using R10.Bridge.Runtime;
 using R10.Core;
+using R10.Core.Memory;
+using R10.Tests;
 
 static class UnifiedRuntimeTests
 {
@@ -142,6 +144,84 @@ static class UnifiedRuntimeTests
             Check(runtime.Current.ProcessId == 42 && runtime.GameDirectory == DirectoryA);
             Check((await runtime.TryCloseAsync()).Success);
         });
+        await test("unified unresolved data rollback survives reselect and only blocks the faulted process", async () =>
+        {
+            const int oldPid = 1234, otherPid = 4321;
+            var original = new DataFixture();
+            var other = new DataFixture();
+            var restarted = new DataFixture();
+            original.InjectDeathRateRollbackConflict(777);
+            bool originalExited = false;
+            bool livenessUnavailable = false;
+            GameConnection Discover(string path)
+            {
+                if (path == DirectoryB) return new(new FixtureProcessMemory(other.Memory, otherPid, 100, () => true), "fixture.ain");
+                if (Volatile.Read(ref originalExited)) return new(new FixtureProcessMemory(restarted.Memory, oldPid, 200, () => true), "fixture.ain");
+                return new(new FixtureProcessMemory(original.Memory, oldPid, 100, () =>
+                    Volatile.Read(ref livenessUnavailable) ? throw new IOException("liveness probe failed") : !Volatile.Read(ref originalExited)), "fixture.ain");
+            }
+            var bridges = new List<Fixture>();
+            var runtime = new UnifiedTrainerRuntime(DirectoryA, Discover, path =>
+            {
+                var bridge = new Fixture { Current = Snapshot(path == DirectoryA ? oldPid : otherPid) };
+                bridges.Add(bridge);
+                return bridge;
+            });
+            async Task WaitForConnection(int pid)
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(7));
+                while (runtime.Current.ProcessId != pid || runtime.Current.Connection is not (ConnectionState.Ready or ConnectionState.Error))
+                    await Task.Delay(10, timeout.Token);
+            }
+            try
+            {
+                await runtime.StartAsync();
+                await WaitForConnection(oldPid);
+                Check(runtime.Current.Connection == ConnectionState.Ready);
+                Check(!(await runtime.SetValueAsync(FeatureId.DeathRate, 50)).Success);
+                string? fault = runtime.Current.Error;
+                Check(runtime.Current.Connection == ConnectionState.Error && fault?.Contains("暂停数据写入") == true);
+                int writes = original.Memory.Writes.Count;
+
+                async Task AssertStillFaulted()
+                {
+                    await WaitForConnection(oldPid);
+                    Check(runtime.Current.Connection == ConnectionState.Error && runtime.Current.Error == fault);
+                    Check(!runtime.Current.Features[FeatureId.Turn].CanEdit && !runtime.Current.Features[FeatureId.Hp].CanEdit);
+                    Check(!(await runtime.SetValueAsync(FeatureId.Turn, 2)).Success);
+                    Check(!(await runtime.SetLockAsync(FeatureId.Turn, true)).Success);
+                    Check(!(await runtime.SetToggleAsync(FeatureId.EnemyNear, true)).Success);
+                    Check(!(await runtime.SetToggleAsync(FeatureId.Hp, true)).Success);
+                    Check(original.Memory.Writes.Count == writes && original.Memory.Int(original.Campaign + 0x94) == 777);
+                    Check(bridges.All(bridge => bridge.Writes.Count == 0));
+                }
+
+                Check((await runtime.SelectGameAsync(DirectoryA)).Success);
+                await AssertStillFaulted();
+                Volatile.Write(ref livenessUnavailable, true);
+                Check(!(await runtime.SelectGameAsync(null)).Success);
+                Volatile.Write(ref livenessUnavailable, false);
+                Check((await runtime.SelectGameAsync(null)).Success);
+                Check((await runtime.SelectGameAsync(DirectoryB)).Success);
+                await WaitForConnection(otherPid);
+                Check((await runtime.SetValueAsync(FeatureId.Turn, 2)).Success && other.Memory.Int(other.Turn + 8) == 2);
+                Check((await runtime.SelectGameAsync(DirectoryA)).Success);
+                await AssertStillFaulted();
+
+                Check((await runtime.SelectGameAsync(null)).Success);
+                Volatile.Write(ref originalExited, true);
+                Check((await runtime.SelectGameAsync(DirectoryA)).Success);
+                await WaitForConnection(oldPid);
+                Check(runtime.Current.Connection == ConnectionState.Ready);
+                Check((await runtime.SetValueAsync(FeatureId.Turn, 3)).Success && restarted.Memory.Int(restarted.Turn + 8) == 3);
+                Check(original.Memory.Writes.Count == writes && original.Memory.Int(original.Campaign + 0x94) == 777);
+            }
+            finally
+            {
+                Volatile.Write(ref livenessUnavailable, false);
+                Check((await runtime.TryCloseAsync()).Success);
+            }
+        });
         await test("unified failed close attempts both owners and blocks writes until retry", async () =>
         {
             var oldMemory = new Fixture { CloseResult = OperationResult.Fail("fixture restore failed") };
@@ -189,6 +269,17 @@ static class UnifiedRuntimeTests
     private static void Check(bool condition) { if (!condition) throw new InvalidOperationException("Unified runtime assertion failed"); }
     private static TrainerSnapshot Snapshot(int? pid = 42, ConnectionState connection = ConnectionState.Ready, bool ready = true) =>
         new(connection, "fixture", pid, true, FeatureCatalog.All.ToDictionary(feature => feature.Id, _ => new FeatureObservation(CanEdit: ready)));
+    private sealed class FixtureProcessMemory(DataFakeMemory memory, int pid, long creationFileTime, Func<bool> isAlive) : IProcessMemory
+    {
+        public int ProcessId => pid;
+        public long? ProcessCreationFileTime => creationFileTime;
+        public uint ModuleBase => memory.ModuleBase;
+        public bool IsAlive => isAlive();
+        public byte[] Read(uint address, int length) => memory.Read(address, length);
+        public void Write(uint address, ReadOnlySpan<byte> bytes) => memory.Write(address, bytes);
+        public IReadOnlyList<MemoryRegion> QueryRegions() => memory.QueryRegions();
+        public void Dispose() { }
+    }
     private sealed class Fixture : ITrainerRuntime, IGameLoadObserver
     {
         public GameLoadEpoch? LastEpoch { get; private set; }
