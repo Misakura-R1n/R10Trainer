@@ -382,7 +382,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         install_extra_treasure_pick(add_function, replace_code, instruction, entry, layout.has_extra_treasure_bonus)
         from data_ain import install_data
         hooks[1]["data"] = install_data(add_function)
-        from card_management_ain import install_card_management, install_card_scene_guards
+        from card_management_ain import install_card_management, install_card_resume_pump, install_card_scene_guards
         install_card_scene_guards(add_function, replace_code, instruction, at)
         hooks[1]["cardManagement"] = install_card_management(add_function, sections["STR0"], encoding)
 
@@ -406,6 +406,15 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         from controls_ain import install_load_control
         hooks[1]["controls"] = install_load_control(add_function)
 
+    strings = sections["STR0"]
+    if profile in {"full", "controls"}:
+        require(libraries[0]["name"] == b"system" and libraries[0]["functions"][22] ==
+                {"name": b"GetFuncStackName", "returnType": 12, "arguments": [(b"index", 10)]},
+                "Unexpected system stack inspection ABI")
+        # Append after the existing CODE so resume saves retain their call return addresses.
+        card_pump = hooks[1]["cardManagement"]
+        hooks[1]["cardManagement"] = len(functions) + len(added_functions)
+
     for hook in hooks:
         original = functions[hook["id"]]
         hook["entry"] = at(hook["entry"])
@@ -423,6 +432,9 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
                              "prefixHex": prefix.hex().upper(), "prefixBytes": len(prefix)})
         listing.append(f"; {hook['name']} -> Tick marker {hook['marker']} -> original body")
         listing.extend(f"{row['pc']:08X} {row['op']} " + " ".join(str(a) for a in row["args"]) for row in rows)
+    if profile in {"full", "controls"}:
+        resume_pump, strings = install_card_resume_pump(add_function, strings, functions, card_pump, require)
+        require(resume_pump == hooks[1]["cardManagement"], "Unexpected card resume pump function ID")
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))
@@ -440,8 +452,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         declaration += b"CardEdit\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
         declaration += b"Battle\0" + i32(10) + i32(3) + b"op\0" + i32(10) + b"a\0" + i32(10) + b"b\0" + i32(10)
     hll = b"HLL0" + i32(len(libraries) + 1) + sections["HLL0"][8:] + declaration
-    updated = {**sections, "CODE": b"CODE" + i32(len(extended)) + extended, "FUNC": bytes(func), "HLL0": hll}
-    # Verify narrow mutations independently of byte serialization and preserve all text/metadata.
+    updated = {**sections, "CODE": b"CODE" + i32(len(extended)) + extended, "FUNC": bytes(func), "HLL0": hll, "STR0": strings}
+    # Verify narrow mutations independently of byte serialization.
     new_functions = read_functions(updated["FUNC"])
     targets = {0, *redirected, *(hook["id"] for hook in hooks)}
     for original, changed in zip(functions, new_functions):
@@ -458,6 +470,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     result_plain = b"".join(updated[name] for name, _, _ in layout.sections)
     compressed = zlib.compress(result_plain, 9)
     result = raw[:8] + struct.pack("<II", len(result_plain), len(compressed)) + compressed
+    changed_sections = [name for name, _, _ in layout.sections if updated[name] != sections[name]]
+    section_deltas = {name: len(updated[name]) - len(sections[name]) for name in changed_sections}
     report = {"schema": 1, "profile": profile, "scriptVersion": 1, "capabilities": capabilities, "controlRedirects": sorted(redirected),
               "sourceVersion": version["id"], "sourceSha256": source_hash, "outputSha256": sha(result),
               "outputPlainSha256": sha(result_plain), "outputPlainLength": len(result_plain), "ainVersion": 12,
@@ -465,7 +479,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
               "hll": {"name": "R10Bridge", "export": "Tick", "return": "int32", "arguments": ["int32 marker", "int32 a", "int32 b"]},
               "hooks": report_hooks, "addedFunctions": added_functions, "codeEdits": code_edits,
               "nullSentinelEntry": len(extended), "originalBytecodePreservedOutsideDeclaredCallsites": True,
-              "changedSections": ["CODE", "FUNC", "HLL0"], "unchangedSections": [name for name,_,_ in layout.sections if updated[name] == sections[name]],
+              "changedSections": changed_sections, "sectionDeltas": section_deltas,
+              "unchangedSections": [name for name, _, _ in layout.sections if name not in section_deltas],
               "prefixStackChecksPassed": len(hooks), "liveValidated": False}
     return result, report, "\n".join(listing) + "\n"
 

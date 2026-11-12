@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import zlib
 from ain_profiles import LAYOUTS, VERSION_BY_SOURCE
-from build_instrumented_ain import build, new_function_record, sha, artifact_directory, require
+from build_instrumented_ain import build, sha, artifact_directory, require
 
 
 def export(source: bytes, dll: bytes) -> dict:
@@ -16,14 +16,10 @@ def export(source: bytes, dll: bytes) -> dict:
             report['outputPlainLength'] == version['targetPlainLength'], 'Generated AIN does not match the version registry')
     original = zlib.decompress(source[16:])
     target = zlib.decompress(generated[16:])
-    code_delta = report['newCodeLength'] - report['originalCodeLength']
-    func_delta = sum(len(new_function_record(f['entry'], f['name'], f['returnType'], f['arguments'], f.get('locals', ())))
-                     for f in report['addedFunctions'])
-    hll_delta = len(target) - len(original) - code_delta - func_delta
     edits = []
     shift = 0
     for name, start, end in LAYOUTS[version['id']].sections:
-        delta = {'CODE': code_delta, 'FUNC': func_delta, 'HLL0': hll_delta}.get(name, 0)
+        delta = report['sectionDeltas'].get(name, 0)
         old = original[start:end]
         new = target[start+shift:end+shift+delta]
         fixed = len(old) - 6 if name == 'CODE' else len(old)
@@ -47,7 +43,7 @@ def export(source: bytes, dll: bytes) -> dict:
         cursor = edit['offset'] + edit['remove']
     rebuilt.extend(original[cursor:])
     require(bytes(rebuilt) == target, 'Recipe does not reconstruct the generated AIN')
-    require(sum(len(base64.b64decode(e['data'])) for e in edits) <= 13 * 1024, 'Recipe exceeds the authored byte limit')
+    require(sum(len(base64.b64decode(e['data'])) for e in edits) <= 14 * 1024, 'Recipe exceeds the authored byte limit')
     return {'schema': 1, 'sourceSha256': version['sourceSha256'], 'sourcePlainSha256': version['sourcePlainSha256'],
             'targetPlainSha256': version['targetPlainSha256'], 'sourcePlainLength': len(original), 'targetPlainLength': len(target),
             'exeSha256': version['exeSha256'],

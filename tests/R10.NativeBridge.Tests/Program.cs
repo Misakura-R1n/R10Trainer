@@ -155,8 +155,10 @@ internal static class Program
         int stale=Request(SetValue("star",200)).GetProperty("id").GetInt32(); tick(2,1,5005); tick(1,16,16);
         Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=stale})).GetProperty("state").GetString()=="rejected" && data(0,0,0)==0,"load invalidates queued data command");
         Check(!Request("{\"op\":\"get_state\"}").GetProperty("dataReady").GetBoolean(),"load clears data snapshot readiness");
-        TestCardManagement(Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"CardEdit")));
+        var edit = Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"CardEdit"));
+        TestCardManagement(edit);
         TestBattleFeatures(Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Battle")));
+        TestResumeCardManagement(edit);
         Console.WriteLine($"{checks-failed} passed, {failed} failed native helper checks; simulation=true; this is not a game compatibility test.");
         return failed==0 ? 0 : 1;
     }
@@ -300,6 +302,48 @@ internal static class Program
         tick(2,1,0); tick(1,16,16);
         Check(Context() == 0 && Result(pending) == "rejected", "readiness and pending HP are cleared on load");
     }
+
+    private static void TestResumeCardManagement(Call edit)
+    {
+        const int scene = 12, legacyReady = 13, verifyResume = 14, ready = 15;
+        JsonElement State() => Request("{\"op\":\"get_state\"}");
+        int Context() => State().GetProperty("cardContext").GetInt32();
+        tick(3,1,0); tick(0,1,10223); tick(1,16,16);
+        edit(ready,1,0);
+        foreach (bool hadPreviousScene in new[] { false, true })
+        {
+            int oldContext = Context();
+            if (hadPreviousScene) edit(scene,1,0);
+            tick(2,2,-1); tick(3,2,0); tick(1,16,16);
+            // Resume can restore a protected scene with no corresponding enter notification.
+            edit(legacyReady,1,0); edit(ready,1,0);
+            int generation = State().GetProperty("loadGeneration").GetInt32();
+            var attempt = Request(JsonSerializer.Serialize(new
+            {
+                op = "card", action = 12, argument = 0, argument2 = 0, generation,
+                context = oldContext, key = "4CC0BC.C0BC"
+            }));
+            Check(Context() == 0 && edit(verifyResume,0,0) == 1 &&
+                attempt.GetProperty("error").GetString() == "card_context_changed",
+                "Resume blocks card mutation before stack verification regardless of pre-load depth");
+            if (hadPreviousScene)
+            {
+                edit(scene,-1,0); edit(ready,1,0);
+                Check(Context() == 0, "a scope exit alone cannot authorize card management after Resume");
+            }
+            edit(verifyResume,1,0); edit(ready,1,0);
+            Check(Context() > oldContext && edit(verifyResume,0,0) == 0,
+                "a verified safe stack reopens cards with a fresh context");
+        }
+
+        int beforeOrdinaryLoad = Context();
+        tick(2,2,-1); tick(3,2,0);
+        tick(2,1,0); tick(3,1,0);
+        edit(ready,1,0);
+        Check(Context() > beforeOrdinaryLoad && edit(verifyResume,0,0) == 0,
+            "a successful ordinary load ends previous Resume verification");
+    }
+
     private static void Check(bool condition,string message)
     { checks++; if (!condition) failed++; Console.WriteLine((condition ? "PASS " : "FAIL ")+message); }
     private static async Task<bool> SlowPartialRequestIsRejectedAsync()

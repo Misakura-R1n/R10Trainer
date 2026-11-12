@@ -13,8 +13,9 @@ SOURCE: Path
 
 
 class WrapperVm:
-    """Execute only newly appended integer/control-flow code with strict stack checks."""
+    """Execute the generated wrappers' bytecode subset with strict stack checks."""
     WIDTHS = {0x00: 1, 0x2C: 1, 0x2D: 1, 0x2E: 1, 0x30: 1, 0x41: 1, 0x5A: 3, 0x5C: 1, 0x61: 1, 0x7E: 1}
+    INSTRUCTION_LIMIT = 500
 
     def __init__(self, generated, report):
         plain = zlib.decompress(generated[16:])
@@ -51,17 +52,18 @@ class WrapperVm:
 
     def run(self, function, arguments, this, stack_values=()):
         pc, stack = function["entry"], list(stack_values)
-        for _ in range(500):
+        locals_ = list(arguments) + [bytearray() if type_id == 12 else 0 for _, type_id in function.get("locals", ())]
+        for _ in range(self.INSTRUCTION_LIMIT):
             op = struct.unpack_from("<H", self.code, pc)[0]
             size = self.WIDTHS.get(op, 0)
             args = struct.unpack_from("<" + "i" * size, self.code, pc + 2)
             pc += 2 + size * 4
             if op == 0: stack.append(args[0])
-            elif op == 1: stack.pop()
+            elif op in (1, 0x77): stack.pop()
             elif op == 2:
                 index, page = stack.pop(), stack.pop()
                 assert page != -1
-                stack.append(arguments[index] if page == "local" else self.globals[index] if page == "global" else self.objects[page][index])
+                stack.append(locals_[index] if page == "local" else self.globals[index] if page == "global" else self.objects[page][index])
             elif op == 4: stack.append("global")
             elif op == 5: stack.append("local")
             elif op == 9: stack.append(stack.pop() + stack.pop())
@@ -70,6 +72,10 @@ class WrapperVm:
                 stack.append(int(left < right))
             elif op == 0x5B: stack.append(this)
             elif op == 0x18: stack.append(int(stack.pop() == stack.pop()))
+            elif op == 0x19:
+                value, index, page = stack.pop(), stack.pop(), stack.pop()
+                assert page == "local"
+                locals_[index] = value; stack.append(value)
             elif op in (0x2D, 0x2E):
                 condition = stack.pop()
                 if bool(condition) == (op == 0x2E): pc = args[0]
@@ -78,14 +84,27 @@ class WrapperVm:
                     return {"continuation": args[0], "stack": stack}
                 pc = args[0]
             elif op == 0x41: stack.append(("string", args[0]))
+            elif op == 0x44:
+                value, destination = stack.pop(), stack.pop()
+                destination[:] = value; stack.append(destination)
+            elif op == 0x49:
+                right, left = stack.pop(), stack.pop()
+                assert right[0] == "string"
+                stack.append(int(left == self.strings[right[1]]))
             elif op == 0x79: pass  # A_REF copies the top value; abstract ownership is unchanged.
             elif op == 0x5A:
-                assert args[0] == 36 and args[2] == -1
+                assert args[2] == -1
+                if args[:2] == (0, 22):
+                    stack.append(self.stack_name(stack.pop()))
+                    continue
+                assert args[0] == 36
                 values = stack[-3:]; del stack[-3:]
                 if args[1] == 0:
                     self.events.append(("tick", *values)); stack.append(0)
                 elif args[1] == 2:
                     stack.append(self.control(*values))
+                elif args[1] == 6:
+                    stack.append(self.card_edit(*values))
                 elif args[1] == 7:
                     stack.append(self.battle(*values))
                 else:
@@ -124,6 +143,39 @@ class WrapperVm:
             elif op == 0x7A: stack.append(stack[-1])
             else: raise AssertionError(f"Unexpected opcode {op:x} at {pc:x}")
         raise AssertionError("Wrapper did not terminate")
+
+
+class CardResumeVm(WrapperVm):
+    INSTRUCTION_LIMIT = 30000
+
+    def __init__(self, generated, report):
+        super().__init__(generated, report)
+        plain = zlib.decompress(generated[16:])
+        deltas = report["sectionDeltas"]
+        start = next(start for name, start, _ in builder.SECTION_BOUNDS if name == "STR0")
+        start += deltas["CODE"] + deltas["FUNC"] + deltas["HLL0"]
+        reader = builder.Reader(plain, start + 4)
+        self.strings = [reader.string() for _ in range(reader.integer())]
+        self.frames = []
+        self.pending = True
+
+    def stack_name(self, index):
+        self.events.append(("stack", index))
+        return self.frames[index] if index < len(self.frames) else b""
+
+    def card_edit(self, op, a, b):
+        assert op == 14 and b == 0 and a in (0, 1)
+        if a == 0:
+            return int(self.pending)
+        self.events.append(("verified",))
+        self.pending = False
+        return 0
+
+    def run(self, function, arguments, this, stack_values=()):
+        if function["name"] == "R10Bridge_CardManagement":
+            self.events.append(("cards",))
+            return None
+        return super().run(function, arguments, this, stack_values)
 
 
 class ControlVm(WrapperVm):
@@ -360,8 +412,10 @@ class FullBuildTests(unittest.TestCase):
 
     def test_card_management_uses_typed_locals_and_integer_native_abi(self):
         pump = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardManagement")
+        resume = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardResumePump")
         update = next(hook for hook in self.report["hooks"] if hook["id"] == 0x2064)
-        self.assertEqual(update["cardManagement"], pump["id"])
+        self.assertEqual(update["cardManagement"], resume["id"])
+        self.assertIn(builder.instruction("CALLFUNC", pump["id"]), bytes.fromhex(resume["bytes"]))
         plain = zlib.decompress(self.generated[16:])
         func_start = 16 + self.report["newCodeLength"]
         function_bytes = sum(len(builder.new_function_record(f["entry"], f["name"], f["returnType"],
@@ -372,7 +426,7 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(record["args"], 0)
         self.assertEqual([t[0] for t in record["types"]], [10] * 8 + [12] * 2)
         hll_start = 0x1AE658A + (func_end - 0x1395C28)
-        hll_end = 0x1AFA1BD + len(plain) - builder.SECTION_BOUNDS[-1][2]
+        hll_end = 0x1AFA1BD + (func_end - 0x1395C28) + self.report["sectionDeltas"]["HLL0"]
         exports = builder.read_libraries(plain[hll_start:hll_end])[-1]["functions"]
         export = next(e for e in exports if e["name"] == b"CardEdit")
         self.assertEqual(export, {"name": b"CardEdit", "returnType": 10,
@@ -400,8 +454,34 @@ class FullBuildTests(unittest.TestCase):
 
         pump = bytes.fromhex(vm.by_name["R10Bridge_CardManagement"]["bytes"])
         self.assertNotIn(ins("PUSHGLOBALPAGE") + ins("PUSH", 0x124) + ins("REF"), pump)
-        self.assertIn(card_edit(13, 1), pump)
-        self.assertIn(card_edit(13, 0), pump)
+        self.assertIn(card_edit(15, 1), pump)
+        self.assertIn(card_edit(15, 0), pump)
+
+    def test_resume_requires_a_complete_stack_with_no_card_blocking_scene(self):
+        name = "R10Bridge_CardResumePump"
+        vm = CardResumeVm(self.generated, self.report)
+        prefix = [name.encode(), b"parts::detail::Update"]
+        safe = prefix + [b"SceneQuestMap@Run", b"main"]
+        for frames in (
+            [], [b"unrecognized", b"main"], prefix + [b"frame"] * 254,
+            *(prefix + [blocked, b"main"] for blocked in (
+                b"BattleScenes::RunBattle", b"BattleScenes::RunBattleResult", b"BattleScenes::RunSimpleBattle",
+                b"BattleScenes::RunSimpleBattleResult", b"Scenes::RunGetCard", b"R10Bridge_CardSceneBattle")),
+        ):
+            with self.subTest(frames=frames[:4]):
+                vm.events.clear()
+                vm.frames = frames
+                vm.invoke(name)
+                self.assertTrue(vm.pending)
+                self.assertEqual(vm.events[-1], ("cards",))
+        vm.events.clear()
+        vm.frames = safe
+        vm.invoke(name)
+        self.assertFalse(vm.pending)
+        self.assertEqual(vm.events[-3:], [("stack", len(safe)), ("verified",), ("cards",)])
+        vm.events.clear()
+        vm.invoke(name)
+        self.assertEqual(vm.events, [("cards",)])
 
     def test_player_battle_callback_refills_ap_and_applies_one_hp_setter(self):
         for maximum, side, hp in ((6, 0, 750), (10, 1, 250)):

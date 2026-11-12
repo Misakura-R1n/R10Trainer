@@ -15,7 +15,7 @@
 #define CARD_TEXT_BYTES 64
 #define CARD_KEY_SIZE (CARD_TEXT_BYTES*4+2)
 enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR };
-enum { CARD_SCENE_SCOPE=12, CARD_SCENE_READY=13 };
+enum { CARD_SCENE_SCOPE=12, CARD_SCENE_READY=13, CARD_RESUME_CHECK=14, CARD_READY=15 };
 enum { BATTLE_HP=14, BATTLE_AP_FULL, BATTLE_UNLIMITED_SKILLS, BATTLE_IMMUNITY, BATTLE_REPEAT, BATTLE_UNLIMITED_ACTIONS };
 enum { BATTLE_FLAG, BATTLE_ENTER, BATTLE_LEAVE, BATTLE_AP, BATTLE_CLAIM_HP, BATTLE_HP_VALUE,
        BATTLE_FINISH_HP, BATTLE_TARGET_CHANGED, BATTLE_REFRESH_SELECTOR };
@@ -40,7 +40,7 @@ typedef struct {
     LONG noDuplicateCards, cardBatch, cardBatchEnabled, filteredCards, fallbackCards;
     LONG foodRedraw, autoRedistribute, extraTreasurePick;
     LONG resourcesFull, dataReady, food, medal, friendship, unit;
-    LONG cardReady, cardContext, cardSceneDepth, cardScenesAtLoad;
+    LONG cardReady, cardContext, cardSceneDepth, cardScenesAtLoad, cardResumePending;
     LONG selector, controlEnabled, battleReady; DWORD battleTick;
     LONG battleVmContext, battleTarget, battleContext, battleRules, battleAp, battleApMax, battleRefresh;
     Command commands[HISTORY];
@@ -344,7 +344,7 @@ int __cdecl Tick(int marker,int a,int b) {
     state.heartbeat++; state.lastTick=GetTickCount();
     if (marker==0) {
         state.dataReady=0; state.cardReady=0; state.cardBatch=-1; state.cardBatchEnabled=0; state.scriptVersion=a; state.capabilities=b;
-        state.cardSceneDepth=state.cardScenesAtLoad=0;
+        state.cardSceneDepth=state.cardScenesAtLoad=state.cardResumePending=0;
         state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
     }
     else if (marker==1) { state.frame++; if (state.phase==0) state.phase=1; }
@@ -356,8 +356,10 @@ int __cdecl Tick(int marker,int a,int b) {
         state.playerHp=state.playerHpMax=state.enemyHp=state.enemyHpMax=-1;
         state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
     } else if (marker==3 && state.phase==2 && state.loadKind==a) {
-        // Restore can abandon pre-load scenes. Preserve any scenes entered during restore.
-        state.cardSceneDepth-=state.cardScenesAtLoad; state.cardScenesAtLoad=0;
+        // Resume restores the saved stack without executing the scene enter hooks.
+        state.cardResumePending=a==2;
+        if (!state.cardResumePending) state.cardSceneDepth-=state.cardScenesAtLoad;
+        state.cardScenesAtLoad=0;
         state.phase=1; state.lastCompletedGeneration=state.generation; state.lastLoadOutcome=1;
     } else if (marker==4 && state.phase==2 && state.loadKind==a) {
         state.cardScenesAtLoad=0; state.phase=0; state.lastLoadOutcome=2;
@@ -549,8 +551,15 @@ int __cdecl CardEdit(int op,int a,int b) {
             --state.cardSceneDepth;
             if (state.cardScenesAtLoad>state.cardSceneDepth) state.cardScenesAtLoad=state.cardSceneDepth;
         }
-    } else if (op==0 || op==CARD_SCENE_READY) {
-        int ready=available && a && state.cardSceneDepth==0 && state.cardContext<2147483647;
+    } else if (op==CARD_RESUME_CHECK && available && state.cardResumePending) {
+        if (a==0) reply=1;
+        else if (a==1) {
+            // The game thread verified that no protected scene frame remains.
+            state.cardResumePending=0;
+            state.cardSceneDepth=0;
+        }
+    } else if (op==0 || op==CARD_SCENE_READY || op==CARD_READY) {
+        int ready=available && a && !state.cardResumePending && state.cardSceneDepth==0 && state.cardContext<2147483647;
         if (ready && !state.cardReady) ++state.cardContext;
         state.cardReady=ready;
     } else if (c && cardCommand(c->kind) && c->generation==state.generation) {

@@ -1,4 +1,5 @@
 """Read card definitions and mutate the selected live save on the game thread."""
+import struct
 
 PAGE, INSPECT, GRANT, SET_STAR = range(10, 14)
 PAGE_SIZE, ROW_LIMIT = 32, 4096
@@ -7,13 +8,13 @@ CARD_STRINGS = {
     "CP932": ("カードデータ", "Id", "識別名", "種別", "テストキャラ", "テストアイテム"),
 }
 PLAYER_CARDS, CHARACTERS = 0x103, 0x101
-CARD_SCENE_SCOPE, CARD_READY = 12, 13
+CARD_SCENE_SCOPE, CARD_RESUME_CHECK, CARD_READY = 12, 14, 15
 CARD_SCENES = (
-    ("Battle", 0x3FF994, "CALLFUNC", 0x6711),
-    ("BattleResult", 0x3FFA7C, "CALLFUNC", 0x6711),
-    ("SimpleBattle", 0x3FFD8E, "CALLFUNC", 0x670B),
-    ("SimpleBattleResult", 0x3FFE14, "CALLMETHOD", 0),
-    ("CardReward", 0x4097B0, "CALLFUNC", 0x6711),
+    ("Battle", 0x6559, 0x3FF994, "CALLFUNC", 0x6711),
+    ("BattleResult", 0x655B, 0x3FFA7C, "CALLFUNC", 0x6711),
+    ("SimpleBattle", 0x6560, 0x3FFD8E, "CALLFUNC", 0x670B),
+    ("SimpleBattleResult", 0x6561, 0x3FFE14, "CALLMETHOD", 0),
+    ("CardReward", 0x6713, 0x4097B0, "CALLFUNC", 0x6711),
 )
 
 
@@ -24,7 +25,7 @@ def install_card_scene_guards(add_function, replace_code, instruction, relocate)
         asm.emit("CALLHLL", 36, 6, -1)
         asm.emit("POP")
 
-    for scene, source_pc, call, operand in CARD_SCENES:
+    for scene, _, source_pc, call, operand in CARD_SCENES:
         pc = relocate(source_pc)
         original = instruction(call, operand)
 
@@ -38,6 +39,64 @@ def install_card_scene_guards(add_function, replace_code, instruction, relocate)
         function = add_function(name, 0, [], body)
         # Jump into the continuation with the original call arguments still on the stack.
         replace_code(pc, original, instruction("JUMP", add_function.entries[function]), name)
+
+
+def install_card_resume_pump(add_function, section, functions, card_pump, require):
+    name = "R10Bridge_CardResumePump"
+    strings = section[8:-1].split(b"\0")
+    count, = struct.unpack_from("<i", section, 4)
+    require(count == len(strings) and section.endswith(b"\0"), "Invalid STR0 table")
+    appended = []
+
+    def intern(value):
+        if value in strings:
+            return strings.index(value)
+        appended.append(value)
+        return count + len(appended) - 1
+
+    own_name = intern(name.encode("ascii"))
+    empty = strings.index(b"")
+    blocked = []
+    for scene, caller, *_ in CARD_SCENES:
+        blocked.append(intern(functions[caller]["name"]))
+        blocked.append(intern(f"R10Bridge_CardScene{scene}".encode("ascii")))
+
+    def pump(asm):
+        index, frame = 0, 1
+
+        def check_resume(verified):
+            for value in (CARD_RESUME_CHECK, verified, 0):
+                asm.emit("PUSH", value)
+            asm.emit("CALLHLL", 36, 6, -1)
+
+        def jump_if_name(string_index, target):
+            asm.local(frame); asm.emit("A_REF"); asm.emit("S_PUSH", string_index)
+            asm.emit("S_EQUALE"); asm.emit("IFNZ", target)
+
+        check_resume(0)
+        asm.emit("IFZ", "cards")
+        # An empty or unavailable stack is insufficient. Index zero must see this frame.
+        asm.emit("PUSH", 0); asm.emit("CALLHLL", 0, 22, -1)
+        asm.emit("S_PUSH", own_name); asm.emit("S_EQUALE"); asm.emit("IFZ", "cards")
+        asm.emit("PUSHLOCALPAGE"); asm.emit("PUSH", index); asm.emit("PUSH", 1)
+        asm.emit("ASSIGN"); asm.emit("POP")
+        asm.label("next")
+        asm.local(index); asm.emit("PUSH", 256); asm.emit("LT"); asm.emit("IFZ", "cards")
+        asm.local(frame); asm.local(index); asm.emit("CALLHLL", 0, 22, -1)
+        asm.emit("S_ASSIGN"); asm.emit("DELETE")
+        jump_if_name(empty, "safe")
+        for string_index in blocked:
+            jump_if_name(string_index, "cards")
+        asm.emit("PUSHLOCALPAGE"); asm.emit("PUSH", index)
+        asm.local(index); asm.emit("PUSH", 1); asm.emit("ADD"); asm.emit("ASSIGN"); asm.emit("POP")
+        asm.emit("JUMP", "next")
+        asm.label("safe"); check_resume(1); asm.emit("POP")
+        asm.label("cards"); asm.emit("CALLFUNC", card_pump); asm.emit("RETURN")
+
+    new_section = section[:4] + struct.pack("<i", count + len(appended)) + section[8:]
+    new_section += b"".join(value + b"\0" for value in appended)
+    function = add_function(name, 0, [], pump, local_types=[("index", 10), ("frame", 12)])
+    return function, new_section
 
 
 def install_card_management(add_function, section, encoding):
