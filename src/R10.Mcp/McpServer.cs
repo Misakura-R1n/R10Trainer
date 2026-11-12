@@ -55,7 +55,11 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
     public async Task<JsonObject?> HandleLineAsync(string line, CancellationToken cancellationToken = default)
     {
         JsonObject request;
-        try { request = JsonNode.Parse(line, new JsonNodeOptions(), new JsonDocumentOptions { MaxDepth = 32 }) as JsonObject ?? throw new JsonException(); }
+        try
+        {
+            request = JsonNode.Parse(line, documentOptions: new JsonDocumentOptions { MaxDepth = 32, AllowDuplicateProperties = false })
+                as JsonObject ?? throw new JsonException();
+        }
         catch (JsonException) { return RpcError(null, -32700, "Parse error"); }
         var id = request["id"]?.DeepClone();
         var method = String(request["method"]);

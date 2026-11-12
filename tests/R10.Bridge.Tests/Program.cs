@@ -298,6 +298,24 @@ await Test("MCP stdio writes JSON lines only", async () =>
     var lines = Encoding.UTF8.GetString(output.ToArray()).Split('\n', StringSplitOptions.RemoveEmptyEntries);
     Check(lines.Length == 2); foreach (var line in lines) Check(JsonNode.Parse(line)!["jsonrpc"]!.GetValue<string>() == "2.0");
 });
+await Test("MCP stdio rejects duplicate JSON keys and keeps serving requests", async () =>
+{
+    var server = new McpServer(new BridgeClient(42, new FixtureTransport(_ => State())));
+    const string requests = """
+        {"jsonrpc":"2.0","id":1,"id":2,"method":"ping"}
+        {"jsonrpc":"2.0","id":3,"method":"ping","params":{"nested":{"key":1,"key":2}}}
+        {"jsonrpc":"2.0","id":4,"method":"ping"}
+        """;
+    using var input = new MemoryStream(Encoding.UTF8.GetBytes(requests + "\n"));
+    using var output = new MemoryStream();
+    await server.RunAsync(input, output);
+    var replies = Encoding.UTF8.GetString(output.ToArray()).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        .Select(line => JsonNode.Parse(line)!.AsObject()).ToArray();
+    Check(replies.Length == 3);
+    Check(replies.Count(reply => reply.ContainsKey("id") && reply["id"] is null &&
+        reply["error"]?["code"]?.GetValue<int>() == -32700) == 2);
+    Check(replies.Single(reply => reply["id"]?.GetValue<int>() == 4)["result"] is JsonObject);
+});
 if (OperatingSystem.IsWindows())
 {
     await Test("pipe server PID mismatch prevents mutation send (fixture)", async () =>
