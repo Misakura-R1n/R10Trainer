@@ -1,6 +1,6 @@
 # R10 修改器
 
-《兰斯 10》Windows x86 修改器。源码版本 **0.9.2**。
+《兰斯 10》Windows x86 修改器。源码版本 **0.9.3**。
 
 [发布记录](https://github.com/Misakura-R1n/R10Trainer/releases) · [变更日志](CHANGELOG.md) · [支持版本](#支持范围与限制) · [构建](#开发与构建)
 
