@@ -311,6 +311,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
                     RuntimeMode = "unified", Features = features,
                     LoadEpoch = ready && !_recovering && !mismatch ? bridge.LoadEpoch : null,
                     CardManagementAvailable = ready && !_recovering && !mismatch && bridge.CardManagementAvailable,
+                    CardBatchReadAvailable = ready && !_recovering && !mismatch && bridge.CardBatchReadAvailable,
                     CardContext = ready && !_recovering && !mismatch ? bridge.CardContext : 0,
                     Battle = ready && !_recovering && !mismatch ? bridge.Battle : null,
                     Connection = _recovering ? ConnectionState.RestorePending : mismatch || waitingForLoad ? ConnectionState.Loading : memory.Connection,

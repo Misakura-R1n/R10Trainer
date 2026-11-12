@@ -10,8 +10,9 @@ public sealed class CardManagementViewModel : ObservableObject
     private readonly ICardManagementRuntime? _runtime;
     private readonly Func<string, Task<bool>> _confirmStar;
     private CardAccess? _access;
-    private bool _active, _busy;
-    private IReadOnlyList<CardEntry> _catalog = [], _rows = [];
+    private bool _active, _busy, _batchReads;
+    private IReadOnlyList<CardEntry> _catalog = [], _rows = [], _cachedCatalog = [];
+    private string? _catalogSession;
     private CardEntry? _selected;
     private CardReply? _detail;
     private string _search = "", _starText = "", _status = "";
@@ -83,6 +84,12 @@ public sealed class CardManagementViewModel : ObservableObject
     {
         var next = _runtime is not null && snapshot.LoadEpoch is { Ready: true } epoch && snapshot.CardContext > 0
             ? new CardAccess(epoch, snapshot.CardContext) : null;
+        _batchReads = snapshot.CardBatchReadAvailable;
+        if (next is not null && _catalogSession != next.Epoch.Session)
+        {
+            _catalogSession = next.Epoch.Session;
+            _cachedCatalog = [];
+        }
         if (_access == next && next is not null) return;
         if (_access != next)
         {
@@ -104,21 +111,57 @@ public sealed class CardManagementViewModel : ObservableObject
     {
         Selected = null;
         Status = "正在读取游戏卡牌表…";
+        IReadOnlyList<CardEntry>? rows = null;
+        if (_batchReads && _cachedCatalog.Count > 0)
+            rows = await RefreshOwnershipAsync(access, _cachedCatalog);
+        if (_access != access || !_active) return;
+        rows ??= await ReadCatalogAsync(access, _batchReads ? CardOperation.CatalogPage : CardOperation.Page);
+        if (rows is null || _access != access || !_active) return;
+        _catalog = _cachedCatalog = rows;
+        FilterRows();
+        Status = "请选择要获取或调整的卡片版本。";
+    });
+
+    private async Task<IReadOnlyList<CardEntry>?> ReadCatalogAsync(CardAccess access, CardOperation operation)
+    {
         var rows = new List<CardEntry>();
         int total = 0;
         do
         {
-            var page = await _runtime!.ExecuteCardAsync(access, new(CardOperation.Page, rows.Count));
-            if (_access != access || !_active) return;
+            var page = await _runtime!.ExecuteCardAsync(access, new(operation, rows.Count));
+            if (_access != access || !_active) return null;
             if (rows.Count != 0 && total != page.Total)
                 throw new BridgeException("card_table_changed", "卡牌表已变化，请重新读取。");
             total = page.Total;
             rows.AddRange(page.Rows);
         } while (rows.Count < total);
-        _catalog = rows;
-        FilterRows();
-        Status = "请选择要获取或调整的卡片版本。";
-    });
+        return rows;
+    }
+
+    private async Task<IReadOnlyList<CardEntry>?> RefreshOwnershipAsync(CardAccess access, IReadOnlyList<CardEntry> catalog)
+    {
+        var rows = new CardEntry[catalog.Count];
+        int start = 0;
+        while (start < rows.Length)
+        {
+            var page = await _runtime!.ExecuteCardAsync(access, new(CardOperation.OwnershipPage, start));
+            if (_access != access || !_active) return null;
+            if (page.Total != rows.Length)
+            {
+                _cachedCatalog = [];
+                return null;
+            }
+            var flags = page.Ownership!.Flags;
+            for (int i = 0; i < flags.Length; i++)
+            {
+                var card = catalog[start + i];
+                bool owned = flags[i] == '1';
+                rows[start + i] = card.Owned == owned ? card : card with { Flags = (card.Flags & ~1) | (owned ? 1 : 0) };
+            }
+            start += flags.Length;
+        }
+        return rows;
+    }
 
     private Task InspectAsync(CardEntry card) => RunAsync(async access =>
     {

@@ -113,6 +113,15 @@ await Test("card readback decodes CP936 and rejects malformed or noncontiguous r
         Check((await Error(() => malformed.GetCommandResultAsync(7))).Code == "invalid_response");
     }
 });
+await Test("compact ownership readback requires the exact bounded flag range", async () =>
+{
+    BridgeClient Client(string flags) => new(42, new FixtureTransport(_ =>
+        Ok(new { id = 7, state = "applied", cardTotal = 99, cardStart = 96, cardOwned = flags })));
+    var result = (await Client("010").GetCommandResultAsync(7)).Cards!;
+    Check(result.Total == 99 && result.Rows.Count == 0 && result.Ownership == new CardOwnershipPage(96, "010"));
+    foreach (string invalid in new[] { "", "01", "0101", "012" })
+        Check((await Error(() => Client(invalid).GetCommandResultAsync(7))).Code == "invalid_response");
+});
 await Test("card readback decodes Japanese text and preserves the raw identity key", async () =>
 {
     BridgeClient Client(int codePage, string idHex) => new(42, new FixtureTransport(_ => Ok(new

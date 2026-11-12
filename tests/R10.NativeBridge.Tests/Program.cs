@@ -208,6 +208,39 @@ internal static class Program
             row.GetProperty("idHex").GetString()=="4CC0BC" && row.GetProperty("characterHex").GetString()=="C0BC",
             "card page carries copied CP936 bytes and the exact row");
 
+        void ReadPart(int start, int total)
+        {
+            tick(1,16,16);
+            Check(edit(1,0,0)==10 && edit(2,0,0)==start, "batched reads reuse one bounded AIN page");
+            for (int index=start; index<Math.Min(start+32,total); index++)
+            {
+                edit(4,index,6+(index&1));
+                edit(5,'A',0);
+            }
+            edit(11,1,total);
+        }
+        Check(Request("{\"op\":\"get_state\"}").GetProperty("cardBatchReadAvailable").GetBoolean(),
+            "new DLL advertises batching with the existing AIN");
+        int catalog = Request(Submit(21,context)).GetProperty("id").GetInt32();
+        ReadPart(0,100);
+        Check(Result(catalog).GetProperty("state").GetString()=="queued", "incomplete catalog is pending");
+        ReadPart(32,100); ReadPart(64,100);
+        var catalogResult = Result(catalog);
+        Check(catalogResult.GetProperty("state").GetString()=="applied" &&
+            catalogResult.GetProperty("cardRows").GetArrayLength()==96 && catalogResult.GetProperty("cardRows")[95].GetProperty("index").GetInt32()==95,
+            "catalog returns 96 consecutive descriptors under one command");
+        int ownership = Request(Submit(22,context)).GetProperty("id").GetInt32();
+        ReadPart(0,70); ReadPart(32,70); ReadPart(64,70);
+        var ownershipResult = Result(ownership);
+        Check(ownershipResult.GetProperty("state").GetString()=="applied" && ownershipResult.GetProperty("cardStart").GetInt32()==0 &&
+            ownershipResult.GetProperty("cardOwned").GetString()==string.Concat(Enumerable.Repeat("01",35)) &&
+            !ownershipResult.TryGetProperty("cardRows",out _), "ownership returns flags without descriptors, including a short final part");
+        int interrupted = Request(Submit(22,context)).GetProperty("id").GetInt32();
+        ReadPart(0,70); edit(scene,1,0);
+        Check(edit(1,0,0)==0 && Result(interrupted).GetProperty("state").GetString()=="rejected",
+            "a scene change rejects a partially collected card page");
+        edit(scene,-1,0); edit(ready,1,0); context=Context();
+
         int editId = Request(Submit(13,context,"4CC0BC.C0BC",80)).GetProperty("id").GetInt32();
         Check(edit(1,0,0)==13 && edit(3,0,0)==80, "single-card star edit pins the requested target");
         edit(4,0,7); edit(5,'L',0); edit(5,0xC0BC,0); edit(6,0xC0BC,0);

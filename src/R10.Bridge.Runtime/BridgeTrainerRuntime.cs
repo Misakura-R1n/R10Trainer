@@ -106,6 +106,8 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             var state = await _client.GetStateAsync().ConfigureAwait(false);
             if (!MatchesCardAccess(state, expected))
                 throw new BridgeException("card_context_changed", "游戏会话、读档或场景已变化，请刷新卡片列表。");
+            if (request.Operation is CardOperation.CatalogPage or CardOperation.OwnershipPage && !state.CardBatchReadAvailable)
+                throw new BridgeException("card_batch_unavailable", "游戏组件尚未提供批量卡表读取。");
             var command = await _client.SubmitCardForSessionAsync(expected.Epoch.Session, expected.Epoch.Generation,
                 expected.Context, request).ConfigureAwait(false);
             command = await AwaitCommandAsync(expected.Epoch.Session, command).ConfigureAwait(false);
@@ -116,10 +118,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             {
                 if (!MatchesCardAccess(await _client.GetStateAsync().ConfigureAwait(false), expected))
                     throw new BridgeException("card_context_changed", "游戏会话、读档或场景已变化，请刷新卡片列表。");
-                if (command.Cards is not { Rows.Count: > 0 } cards || cards.Rows[0].Index != request.Index ||
-                    (request.Operation != CardOperation.Page && (cards.Rows.Count != 1 || cards.Rows[0].Key != request.Key)) ||
-                    (request.Operation == CardOperation.Grant && !cards.Rows[0].Owned) ||
-                    (request.Operation == CardOperation.SetStar && cards.Star != request.Star))
+                if (command.Cards is not { } cards || !MatchesCardReply(request, cards))
                     throw new BridgeException("invalid_card_result", "返回的卡片与请求不一致。");
                 return cards;
             }
@@ -129,6 +128,20 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             }
         }
         finally { _gate.Release(); }
+    }
+    private static bool MatchesCardReply(CardRequest request, CardReply cards)
+    {
+        if (request.Operation == CardOperation.OwnershipPage)
+            return cards.Ownership?.Start == request.Index;
+        if (cards.Rows.Count == 0 || cards.Rows[0].Index != request.Index) return false;
+        return request.Operation switch
+        {
+            CardOperation.Page => cards.Rows.Count <= CardRequest.PageSize,
+            CardOperation.CatalogPage => cards.Rows.Count == Math.Min(CardRequest.CatalogPageSize, cards.Total - request.Index),
+            _ => cards.Rows.Count == 1 && cards.Rows[0].Key == request.Key &&
+                 (request.Operation != CardOperation.Grant || cards.Rows[0].Owned) &&
+                 (request.Operation != CardOperation.SetStar || cards.Star == request.Star)
+        };
     }
 
     private static bool MatchesCardAccess(BridgeState state, CardAccess expected) =>
@@ -312,6 +325,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             "组件提供游戏线程功能与状态读取。") {
                 LoadEpoch=ReadEpoch(state), Battle=battle,
                 CardManagementAvailable = state.CardManagementAvailable,
+                CardBatchReadAvailable = state.CardManagementAvailable && state.CardBatchReadAvailable,
                 CardContext = state.CardManagementAvailable && state.Phase == 1 && state.GameThreadResponsive == true ? state.CardContext : 0
             });
     }

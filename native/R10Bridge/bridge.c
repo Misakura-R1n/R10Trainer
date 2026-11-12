@@ -11,6 +11,8 @@
 #define EXTRA_TREASURE_PICK_CAPABILITY 8192
 #define EXTRA_TREASURE_PICK 20
 #define CARD_PAGE_SIZE 32
+#define CARD_CATALOG_SIZE (3*CARD_PAGE_SIZE)
+#define CARD_OWNERSHIP_SIZE (8*CARD_PAGE_SIZE)
 #define CARD_ROW_LIMIT 4096
 #define CARD_TEXT_BYTES 64
 #define CARD_KEY_SIZE (CARD_TEXT_BYTES*4+2)
@@ -33,7 +35,7 @@ static struct {
 static void resetRewardSelection(void) {
     reward.ordinal=reward.width=reward.invalid=reward.count=reward.totalWeight=0;
 }
-enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR };
+enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR, CARD_CATALOG=21, CARD_OWNERSHIP };
 enum { CARD_SCENE_SCOPE=12, CARD_SCENE_READY=13, CARD_RESUME_CHECK=14, CARD_READY=15 };
 enum { BATTLE_HP=14, BATTLE_AP_FULL, BATTLE_UNLIMITED_SKILLS, BATTLE_IMMUNITY, BATTLE_REPEAT, BATTLE_UNLIMITED_ACTIONS };
 enum { BATTLE_FLAG, BATTLE_ENTER, BATTLE_LEAVE, BATTLE_AP, BATTLE_CLAIM_HP, BATTLE_HP_VALUE,
@@ -45,10 +47,11 @@ typedef struct {
     unsigned char id[CARD_TEXT_BYTES], character[CARD_TEXT_BYTES];
 } CardRow;
 typedef struct {
-    LONG total, count, star, exp, nextExp, maxStar;
+    LONG total, count, partStart, star, exp, nextExp, maxStar;
     int invalid;
     char expected[CARD_KEY_SIZE];
-    CardRow rows[CARD_PAGE_SIZE];
+    CardRow rows[CARD_CATALOG_SIZE];
+    unsigned char owned[CARD_OWNERSHIP_SIZE];
 } CardResult;
 typedef struct {
     DWORD pid, gameThreadId, heartbeat, frame, lastTick;
@@ -87,7 +90,12 @@ static char *unsignedNumber(char *p, DWORD value) {
 static int equal(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; } return *a == *b;
 }
-static int cardCommand(LONG kind) { return kind>=CARD_PAGE && kind<=CARD_SET_STAR; }
+static int bulkCardRead(LONG kind) { return kind==CARD_CATALOG || kind==CARD_OWNERSHIP; }
+static int cardPage(LONG kind) { return kind==CARD_PAGE || bulkCardRead(kind); }
+static int cardCommand(LONG kind) { return (kind>=CARD_PAGE && kind<=CARD_SET_STAR) || bulkCardRead(kind); }
+static LONG cardLimit(LONG kind) {
+    return kind==CARD_CATALOG ? CARD_CATALOG_SIZE : kind==CARD_OWNERSHIP ? CARD_OWNERSHIP_SIZE : CARD_PAGE_SIZE;
+}
 static int battleToggle(LONG kind) { return kind>=BATTLE_AP_FULL && kind<=BATTLE_UNLIMITED_ACTIONS; }
 static LONG capability(LONG kind) {
     if (kind==EXTRA_TREASURE_PICK) return EXTRA_TREASURE_PICK_CAPABILITY;
@@ -123,8 +131,15 @@ static char *hexBytes(char *p,const unsigned char *bytes,unsigned length) {
     for (unsigned i=0;i<length;i++) { *p++=hex[bytes[i]>>4]; *p++=hex[bytes[i]&15]; }
     return p;
 }
-static char *cardPayload(char *p,const Command *command,const CardResult *result) {
-    if (state.capabilities & CARD_CP932) p=field(p,",\"cardCodePage\":",932);
+static char *cardPayload(char *p,const Command *command,const CardResult *result,int japanese) {
+    if (command->kind==CARD_OWNERSHIP) {
+        p=field(p,",\"cardTotal\":",result->total);
+        p=field(p,",\"cardStart\":",command->argument);
+        p=put(p,",\"cardOwned\":\"");
+        for (LONG i=0;i<result->count;i++) *p++=(char)('0'+result->owned[i]);
+        return put(p,"\"");
+    }
+    if (japanese) p=field(p,",\"cardCodePage\":",932);
     p=field(p,",\"cardTotal\":",result->total);
     p=put(p,",\"cardRows\":[");
     for (LONG i=0;i<result->count;i++) {
@@ -136,7 +151,7 @@ static char *cardPayload(char *p,const Command *command,const CardResult *result
         p=put(p,"\"}");
     }
     p=put(p,"]");
-    if (command->kind!=CARD_PAGE) {
+    if (!cardPage(command->kind)) {
         p=field(p,",\"star\":",result->star); p=field(p,",\"exp\":",result->exp);
         p=field(p,",\"nextExp\":",result->nextExp); p=field(p,",\"maxStar\":",result->maxStar);
     }
@@ -206,7 +221,7 @@ static void respond(const char *input, char *out) {
         LONG kind=hpRequest ? BATTLE_HP : equal(r.op,"set_value") ? 8 : cardRequest || equal(r.op,"action") ? r.action : featureCommand(r.feature);
         if (cardRequest && (!cardCommand(kind) || r.present!=(1|8|32|64|128|512|1024) ||
             !r.context || r.argument>=CARD_ROW_LIMIT || (kind!=CARD_SET_STAR && r.argument2!=0) ||
-            (kind==CARD_PAGE ? r.key[0]!=0 : r.key[0]==0))) { errorResponse(out,"invalid_card_request"); return; }
+            (cardPage(kind) ? r.key[0]!=0 : r.key[0]==0))) { errorResponse(out,"invalid_card_request"); return; }
         if (equal(r.op,"set_feature") && (r.present != 15 || !kind)) { errorResponse(out,"unsupported_feature"); return; }
         if (hpRequest) {
             if (r.present!=(1|8|64|256|512) || !r.context || r.argument>1 || !r.value) { errorResponse(out,"invalid_battle_hp"); return; }
@@ -240,7 +255,7 @@ static void respond(const char *input, char *out) {
         c->context=r.context;
         if (cardRequest) {
             CardResult *result=&cardResults[id % HISTORY];
-            result->count=0; result->total=0; result->star=-1; result->exp=0;
+            result->count=0; result->total=0; result->partStart=0; result->star=-1; result->exp=0;
             result->nextExp=0; result->maxStar=0; result->invalid=0;
             copy(result->expected,r.key,sizeof(result->expected));
         }
@@ -250,12 +265,15 @@ static void respond(const char *input, char *out) {
     }
     if (equal(r.op,"get_command_result")) {
         if (r.present != 17 || r.id <= 0) { errorResponse(out,"invalid_request"); return; }
+        static CardResult result; /* The pipe worker alone formats responses. */
         EnterCriticalSection(&gate); Command c = state.commands[r.id % HISTORY];
         if (c.id != r.id) { LeaveCriticalSection(&gate); errorResponse(out,"command_not_found"); return; }
+        int hasCards=c.state==2 && cardCommand(c.kind), japanese=(state.capabilities & CARD_CP932)!=0;
+        if (hasCards) copy(&result,&cardResults[r.id % HISTORY],sizeof(result));
+        LeaveCriticalSection(&gate);
         p=prefix(out); p=field(p,",\"id\":",c.id); p=put(p,",\"state\":\""); p=put(p,commandState(c.state));
         p=put(p,"\""); if (c.state==3) p=put(p,",\"error\":\"action_unavailable_or_context_changed\"");
-        if (c.state==2 && cardCommand(c.kind)) p=cardPayload(p,&c,&cardResults[r.id % HISTORY]);
-        LeaveCriticalSection(&gate);
+        if (hasCards) p=cardPayload(p,&c,&result,japanese);
         p=put(p,"}\n"); *p=0; return;
     }
     if (r.present != 1 || (!equal(r.op,"get_state") && !equal(r.op,"ping"))) { errorResponse(out,"unsupported_operation"); return; }
@@ -281,6 +299,7 @@ static void respond(const char *input, char *out) {
     p=put(p,snapshot.resourcesFull ? ",\"resourcesFull\":true" : ",\"resourcesFull\":false");
     p=put(p,snapshot.dataReady ? ",\"dataReady\":true" : ",\"dataReady\":false");
     p=field(p,",\"cardContext\":",snapshot.cardReady ? snapshot.cardContext : 0);
+    p=put(p,snapshot.capabilities & CARD_CAPABILITY ? ",\"cardBatchReadAvailable\":true" : ",\"cardBatchReadAvailable\":false");
     p=field(p,",\"food\":",snapshot.food); p=field(p,",\"medal\":",snapshot.medal);
     p=field(p,",\"friendship\":",snapshot.friendship); p=field(p,",\"unit\":",snapshot.unit);
     p=field(p,",\"filteredCards\":",snapshot.filteredCards); p=field(p,",\"fallbackCards\":",snapshot.fallbackCards);
@@ -313,7 +332,7 @@ static DWORD WINAPI server(void *unused) {
         DWORD connectError=connected ? 0 : GetLastError();
         if (connected || connectError==ERROR_PIPE_CONNECTED || (connectError==ERROR_IO_PENDING && finishIo(pipe,&o,FALSE,&count,INFINITE))) {
             /* A full card page contains at most two 64-byte hex fields per row. */
-            static char output[CARD_PAGE_SIZE*(4*CARD_TEXT_BYTES+96)+2048];
+            static char output[CARD_CATALOG_SIZE*(4*CARD_TEXT_BYTES+96)+2048];
             char input[1024]; unsigned used=0; int complete=0,invalid=0;
             DWORD requestStarted=GetTickCount();
             while (used < sizeof(input)-1) {
@@ -642,16 +661,24 @@ int __cdecl CardEdit(int op,int a,int b) {
         state.cardReady=ready;
     } else if (c && cardCommand(c->kind) && c->generation==state.generation) {
         CardResult *result=&cardResults[c->id % HISTORY];
+        int bulk=bulkCardRead(c->kind);
         if (op==1 && c->state==1) {
             if (!available || !state.cardReady || c->context!=state.cardContext || GetTickCount()-c->submitted>3000) {
                 c->state=3; state.lastCommandState=3; state.pendingId=0;
-            } else { c->state=EXECUTING; reply=c->kind; }
+            } else {
+                result->partStart=result->count;
+                c->state=EXECUTING;
+                // Reuse the script's bounded 32-row page in each game update.
+                reply=bulk ? CARD_PAGE : c->kind;
+            }
         } else if (c->state==EXECUTING) {
-            CardRow *row=result->count ? &result->rows[result->count-1] : NULL;
-            if (op==2) reply=c->argument;
+            CardRow *row=result->count && c->kind!=CARD_OWNERSHIP ? &result->rows[result->count-1] : NULL;
+            if (op==2) reply=c->argument+result->partStart;
             else if (op==3) reply=c->argument2;
             else if (op==4) {
-                if (result->count>=CARD_PAGE_SIZE || a<0 || a>=CARD_ROW_LIMIT || b<0 || b>7) result->invalid=1;
+                if (result->count>=cardLimit(c->kind) || a<0 || a>=CARD_ROW_LIMIT || b<0 || b>7 ||
+                    (bulk && (a!=c->argument+result->count || result->count-result->partStart>=CARD_PAGE_SIZE))) result->invalid=1;
+                else if (c->kind==CARD_OWNERSHIP) result->owned[result->count++]=(unsigned char)(b&1);
                 else {
                     row=&result->rows[result->count++]; row->index=a; row->flags=b;
                     row->idLength=row->characterLength=0;
@@ -668,9 +695,21 @@ int __cdecl CardEdit(int op,int a,int b) {
             else if (op==9) { result->star=a; result->exp=b; }
             else if (op==10) { result->nextExp=a; result->maxStar=b; }
             else if (op==11) {
+                if (bulk) {
+                    LONG start=c->argument+result->partStart;
+                    if (b<=start || b>CARD_ROW_LIMIT || (result->total && result->total!=b)) result->invalid=1;
+                    else {
+                        LONG remaining=b-start;
+                        LONG expected=remaining<CARD_PAGE_SIZE ? remaining : CARD_PAGE_SIZE;
+                        if (result->count-result->partStart!=expected) result->invalid=1;
+                    }
+                }
                 result->total=b;
-                c->state=a && !result->invalid && available && state.cardReady && c->context==state.cardContext ? 2 : 3;
-                state.lastCommandState=c->state; state.pendingId=0;
+                if (a && !result->invalid && available && state.cardReady && c->context==state.cardContext) {
+                    if (bulk && result->count<cardLimit(c->kind) && c->argument+result->count<b) c->state=1;
+                    else c->state=2;
+                } else c->state=3;
+                if (c->state!=1) { state.lastCommandState=c->state; state.pendingId=0; }
             }
         }
     }

@@ -47,6 +47,7 @@ public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, lon
     public bool DataAvailable => (Capabilities.GetValueOrDefault() & 256) != 0;
     public bool CardManagementAvailable => (Capabilities.GetValueOrDefault() & 512) != 0;
     public int CardContext { get; init; }
+    public bool CardBatchReadAvailable { get; init; }
     public bool FoodRedraw { get; init; }
     public bool AutoRedistribute { get; init; }
     public const int ExtraTreasurePickCapability = 8192;
@@ -69,7 +70,7 @@ public sealed record BridgeCommand(long Id, string State, string? Error = null)
     public CardReply? Cards { get; init; }
 }
 
-public enum CardOperation { Page = 10, Inspect, Grant, SetStar }
+public enum CardOperation { Page = 10, Inspect, Grant, SetStar, CatalogPage = 21, OwnershipPage }
 
 public sealed record CardEntry(int Index, string Id, string CharacterId, int Flags, string Key)
 {
@@ -82,12 +83,20 @@ public sealed record CardEntry(int Index, string Id, string CharacterId, int Fla
 public sealed record CardRequest(CardOperation Operation, int Index, string Key = "", int Star = 0)
 {
     public const int PageSize = 32;
+    public const int CatalogPageSize = 3 * PageSize;
+    public const int OwnershipPageSize = 8 * PageSize;
     public const int RowLimit = 4096;
+    public bool IsPage => Operation is CardOperation.Page or CardOperation.CatalogPage or CardOperation.OwnershipPage;
     public bool Writes => Operation is CardOperation.Grant or CardOperation.SetStar;
 }
 
+public sealed record CardOwnershipPage(int Start, string Flags);
+
 public sealed record CardReply(int Total, IReadOnlyList<CardEntry> Rows, int? Star = null,
-    int Experience = 0, int NextExperience = 0, int MaxStar = 0);
+    int Experience = 0, int NextExperience = 0, int MaxStar = 0)
+{
+    public CardOwnershipPage? Ownership { get; init; }
+}
 
 public interface IBridgeClient
 {

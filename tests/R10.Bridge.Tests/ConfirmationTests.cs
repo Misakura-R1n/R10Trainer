@@ -97,6 +97,21 @@ static class ConfirmationTests
             Check(vm.Selected?.Owned == true && !vm.GrantCommand.CanExecute(null) && !vm.CanEditStar);
             return Task.CompletedTask;
         });
+        await test("card catalog is reused across scene changes only within the same process session", () =>
+        {
+            var epoch = new GameLoadEpoch(42, "42:original", 3, true);
+            var runtime = new Fixture(epoch);
+            var snapshot = runtime.Current with { CardBatchReadAvailable = true };
+            var vm = new CardManagementViewModel(runtime, _ => Task.FromResult(false));
+            vm.Update(snapshot); vm.SetActive(true);
+            Check(vm.Rows.Single(card => card.Index == Fixture.Item.Index) == Fixture.Item);
+            vm.Update(snapshot with { CardContext = 6 });
+            Check(vm.Rows.Single(card => card.Index == Fixture.Item.Index) == Fixture.Item with { Flags = 3 });
+            vm.Update(snapshot with { CardContext = 7, LoadEpoch = epoch with { Session = "42:new" } });
+            Check(vm.Rows.Single(card => card.Index == Fixture.Item.Index) == Fixture.Item &&
+                runtime.CardReads.SequenceEqual(new[] { CardOperation.CatalogPage, CardOperation.OwnershipPage, CardOperation.CatalogPage }));
+            return Task.CompletedTask;
+        });
         await test("card star confirmation keeps the selected card key and rejects changed read generations", async () =>
         {
             var epoch = new GameLoadEpoch(42, "42:original", 3, true);
@@ -143,10 +158,17 @@ static class ConfirmationTests
         { ProcessId = epoch.ProcessId, LoadEpoch = epoch, CardManagementAvailable = true, CardContext = 5 };
         internal (CardAccess, CardRequest)? CardWrite;
         internal (BattleEditContext, decimal)? BattleWrite;
+        internal List<CardOperation> CardReads { get; } = [];
         public Task<CardReply> ExecuteCardAsync(CardAccess expected, CardRequest request)
         {
             if (request.Writes) CardWrite = (expected, request);
-            if (request.Operation == CardOperation.Page) return Task.FromResult(new CardReply(3, [Card, OtherVersion, Item]));
+            if (request.IsPage)
+            {
+                CardReads.Add(request.Operation);
+                if (request.Operation == CardOperation.OwnershipPage)
+                    return Task.FromResult(new CardReply(3, []) { Ownership = new(0, "111") });
+                return Task.FromResult(new CardReply(3, [Card, OtherVersion, Item]));
+            }
             if (request.Index == Item.Index)
                 return Task.FromResult(new CardReply(3, [request.Operation == CardOperation.Grant ? Item with { Flags = 3 } : Item]));
             return Task.FromResult(new CardReply(3, [Card], request.Writes ? request.Star : 10, 0, 259, 999));
