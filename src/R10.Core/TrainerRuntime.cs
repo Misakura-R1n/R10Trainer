@@ -18,6 +18,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
     private readonly Func<int, Task> _waitForWork;
     private readonly GameLoadFence _loadFence;
     private readonly DataWriteFaults _dataWriteFaults;
+    private readonly IReadOnlySet<FeatureId>? _skippedValues;
     private long _loadRevision;
     private readonly object _closeGate = new();
     private readonly SemaphoreSlim _wake = new(0, 1);
@@ -46,14 +47,20 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
     public TrainerRuntime(Func<GameConnection?>? connectionFactory = null)
         : this(connectionFactory ?? GameConnection.Discover, (memory, path) => new R10PatchEngine(memory, path)) { }
     public TrainerRuntime(Func<GameConnection?> connectionFactory, DataWriteFaults dataWriteFaults)
-        : this(connectionFactory, (memory, path) => new R10PatchEngine(memory, path), dataWriteFaults: dataWriteFaults) { }
+        : this(connectionFactory, dataWriteFaults, null) { }
+    internal TrainerRuntime(Func<GameConnection?> connectionFactory, DataWriteFaults dataWriteFaults,
+        IReadOnlySet<FeatureId>? skippedValues)
+        : this(connectionFactory, (memory, path) => new R10PatchEngine(memory, path),
+            dataWriteFaults: dataWriteFaults, skippedValues: skippedValues) { }
     internal TrainerRuntime(Func<GameConnection?> connectionFactory, Func<IProcessMemory, string, R10PatchEngine> patchFactory,
-        Func<long>? clock = null, Func<int, Task>? waitForWork = null, DataWriteFaults? dataWriteFaults = null)
+        Func<long>? clock = null, Func<int, Task>? waitForWork = null, DataWriteFaults? dataWriteFaults = null,
+        IReadOnlySet<FeatureId>? skippedValues = null)
     {
         _discover = connectionFactory; _createPatches = patchFactory;
         _clock = clock ?? (() => Environment.TickCount64);
         _loadFence = new(_clock);
         _dataWriteFaults = dataWriteFaults ?? new();
+        _skippedValues = skippedValues;
         _waitForWork = waitForWork ?? WaitForWorkAsync;
     }
     public void ObserveGameLoad(GameLoadEpoch? epoch) => _loadFence.Update(epoch);
@@ -96,7 +103,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
                 throw new InvalidOperationException("请先关闭资源全满，再单独修改此数值。");
             _data!.WriteValue(id, value, contextValid);
             if (_lockRequested.GetValueOrDefault(id)) _locks[id] = _data.CaptureLock(id, contextValid);
-            _values = _data.ReadValues();
+            _values = _data.ReadValues(_skippedValues);
         }));
     }
     public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => Queue(() => Execute(id, () =>
@@ -249,7 +256,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             {
                 foreach (var id in new[] { FeatureId.Treasure, FeatureId.Resources, FeatureId.War }) Maintain(id);
                 foreach (var id in new[] { FeatureId.Turn, FeatureId.DeathRate, FeatureId.Army }) MaintainLock(id);
-                _values = _data!.ReadValues(); SynchronizeEngine();
+                _values = _data!.ReadValues(_skippedValues); SynchronizeEngine();
             }
             else _values = new Dictionary<FeatureId, decimal?>();
         }

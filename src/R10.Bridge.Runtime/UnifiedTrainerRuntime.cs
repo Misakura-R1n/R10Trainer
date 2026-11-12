@@ -14,6 +14,8 @@ namespace R10.Bridge.Runtime;
 public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRuntime
 {
     public const string HpHelp = "在已接入的战斗伤害结算点保护我方 HP。保留治疗、初始化与结果结算；不主动补满血量。首次使用请安装游戏组件并重新启动游戏。";
+    private static readonly IReadOnlySet<FeatureId> ComponentValues = new HashSet<FeatureId>(BridgeTrainerRuntime.ValueFeatures.Keys)
+        { FeatureId.PlayerHp, FeatureId.EnemyHp };
     private readonly SemaphoreSlim _gate = new(1);
     private readonly object _stateGate = new();
     private readonly Func<string, (ITrainerRuntime Memory, ITrainerRuntime Bridge)> _factory;
@@ -44,7 +46,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
         Func<string, GameConnection?> discover, Func<string, ITrainerRuntime> createBridge)
     {
         var dataWriteFaults = new DataWriteFaults();
-        return path => (new TrainerRuntime(() => discover(path), dataWriteFaults), createBridge(path));
+        return path => (new TrainerRuntime(() => discover(path), dataWriteFaults, ComponentValues), createBridge(path));
     }
     internal UnifiedTrainerRuntime(string? gameDirectory, Func<string, (ITrainerRuntime Memory, ITrainerRuntime Bridge)> factory)
     {
@@ -289,7 +291,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
                 features[FeatureId.NoDuplicateCards] = cards with { CanEdit=ready && !_recovering && cards.CanEdit,
                     Active=ready && !_recovering && cards.Active, Help=FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help };
                 var componentRows = BridgeTrainerRuntime.ComponentFeatures.Keys.Where(id => id is not (FeatureId.Hp or FeatureId.NoDuplicateCards))
-                    .Concat(BridgeTrainerRuntime.ValueFeatures.Keys).Concat([FeatureId.PlayerHp, FeatureId.EnemyHp]);
+                    .Concat(ComponentValues);
                 foreach (var id in componentRows)
                 {
                     var item=bridge.Features.GetValueOrDefault(id) ?? new();

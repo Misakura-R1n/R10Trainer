@@ -90,13 +90,18 @@ public sealed class R10DataEngine
         return _scene;
     }
 
-    public IReadOnlyDictionary<FeatureId, decimal?> ReadValues()
+    public IReadOnlyDictionary<FeatureId, decimal?> ReadValues() => ReadValues(null);
+
+    internal IReadOnlyDictionary<FeatureId, decimal?> ReadValues(IReadOnlySet<FeatureId>? skippedValues)
     {
         _readErrors.Clear();
-        var values = FeatureCatalog.All.Where(f => f.Kind != FeatureKind.Toggle).ToDictionary(f => f.Id, _ => (decimal?)null);
+        var fields = FeatureCatalog.All.Where(f => f.Kind != FeatureKind.Toggle);
+        var values = fields.ToDictionary(f => f.Id, _ => (decimal?)null);
         if (!_scene.GameplayReady || _graph is null) return new ReadOnlyDictionary<FeatureId, decimal?>(values);
-        foreach (var id in values.Keys.ToArray())
+        foreach (var field in fields)
         {
+            var id = field.Id;
+            if (skippedValues?.Contains(id) == true) continue;
             try
             {
                 var graph = RequireGraph();
@@ -127,8 +132,14 @@ public sealed class R10DataEngine
     {
         var graph = RequireGraph();
         uint owner = ResolveType(graph, CampaignTable);
-        int[] values = ArmyOffsets.Select(offset => ReadInt(owner, offset)).ToArray();
-        foreach (int value in values) CheckRange(value, 0, 99999999, "四国兵力");
+        var values = new int[ArmyOffsets.Length];
+        var bytes = _memory.Read(Add(owner, ArmyOffsets[0]), values.Length * sizeof(int));
+        for (int i = 0; i < values.Length; i++)
+        {
+            int value = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(i * sizeof(int), sizeof(int)));
+            CheckRange(value, 0, 99999999, "四国兵力");
+            values[i] = value;
+        }
         if (ReadGraph() != graph || ResolveType(graph, CampaignTable) != owner) throw new IOException("读取兵力时对象已改变。");
         return Array.AsReadOnly(values);
     }

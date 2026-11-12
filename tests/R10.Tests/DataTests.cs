@@ -40,6 +40,21 @@ public static class DataTests
             Check(values[FeatureId.DeathRate] == 12.5m && values[FeatureId.Food] == 2, "Observed units wrong");
             Check(f.Memory.Writes.Count == 0, "Observation wrote memory");
         });
+        test("data: composed sampling skips component fields and reads the four armies together", () =>
+        {
+            var f = new DataFixture();
+            f.Engine.Refresh();
+            List<(uint Address, int Length)> reads = [];
+            f.Memory.BeforeRead = (address, length) => reads.Add((address, length));
+            var skipped = new HashSet<FeatureId> { FeatureId.Food, FeatureId.Medal, FeatureId.Friendship,
+                FeatureId.Unit, FeatureId.Star, FeatureId.PlayerHp, FeatureId.EnemyHp };
+            var values = f.Engine.ReadValues(skipped);
+            Check(skipped.All(id => values[id] is null) && values[FeatureId.Turn] == 0 && values[FeatureId.DeathRate] == 12.5m,
+                "Skipping component fields changed the external values");
+            Check(!reads.Any(read => read.Address == f.Offsets + 0x400), "Resource pointer chain was still sampled");
+            Check(reads.Where(read => read.Address >= f.Campaign + 0x64 && read.Address <= f.Campaign + 0x70)
+                .SequenceEqual(new[] { (f.Campaign + 0x64, 16) }), "Army fields were not read as one block");
+        });
         test("data: scalar routes and input boundaries", () =>
         {
             var f = new DataFixture(); f.Engine.Refresh();
