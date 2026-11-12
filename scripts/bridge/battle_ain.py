@@ -4,7 +4,7 @@ from controls_ain import control, dispatch_battle_control
 
 CONTEXT, ENEMY, PARTY, PLAYER_PARAMETERS = 0x124, 0x123, 0x104, 0x100
 AP_FULL, UNLIMITED_SKILLS, STATUS_IMMUNITY, REPEAT_ACTIONS, UNLIMITED_ACTIONS = (1, 2, 4, 8, 16)
-FLAG, ENTER, LEAVE, REPORT_AP, CLAIM_HP, HP_VALUE, FINISH_HP, TARGET_CHANGED, REFRESH_SELECTOR = range(9)
+FLAG, ENTER, LEAVE, REPORT_AP, CLAIM_HP, HP_VALUE, FINISH_HP, TARGET_CHANGED, REFRESH_SELECTOR, RESUME = range(10)
 
 
 def battle(asm, op, a=0, b=0, discard=False):
@@ -43,6 +43,47 @@ def current_ap(asm):
 
 def max_ap(asm):
     asm.global_get(PLAYER_PARAMETERS, 0x66A6)
+
+
+def install_battle_resume(add_function, owned_entry):
+    def click_guard_parts(asm):
+        asm.member(17); member_of_value(asm, 3); member_of_value(asm, 0)
+
+    def guard_part(asm, index):
+        click_guard_parts(asm); member_of_value(asm, index)
+
+    def resume(asm):
+        battle(asm, RESUME, -1); asm.emit("IFZ", "done")
+        for member in (17, 18, 20):  # Selector, scene stack, and the scene's battle context.
+            asm.member(member); asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "done")
+        for global_id in (PARTY, ENEMY, 0x110):
+            asm.global_ref(global_id); asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "done")
+        asm.member(20); asm.global_ref(CONTEXT); asm.emit("EQUALE"); asm.emit("IFZ", "done")
+        asm.member(18); asm.emit("PUSH", 0x73DF); asm.emit("CALLMETHOD", 0); asm.emit("IFZ", "done")
+        asm.global_get(0x110, 0x6A99); asm.emit("IFNZ", "done")  # BattleResult.Type is undecided.
+        for side in (0, 1):
+            player_hp(asm, side); asm.emit("PUSH", 1); asm.emit("LT"); asm.emit("IFNZ", "done")
+
+        # SetControlEnable toggles both parts of the click guard. Read the restored parts
+        # rather than enabling player control on the basis of the battle object alone.
+        click_guard_parts(asm); asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "done")
+        click_guard_parts(asm); asm.emit("CALLHLL", 5, 17, 13)
+        asm.emit("PUSH", 2); asm.emit("LT"); asm.emit("IFNZ", "done")
+        for index in (0, 1):
+            guard_part(asm, index); asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "done")
+            guard_part(asm, index); asm.emit("PUSH", 0x739E); asm.emit("CALLMETHOD", 0)
+            asm.emit("CALLHLL", 27, 2, -1); asm.emit("IFZ", "done")  # PartsEngine.IsExist
+
+        battle(asm, RESUME, lambda a: a.member(20), lambda a: a.member(17)); asm.emit("IFZ", "done")
+        asm.emit("PUSH", 20); asm.member(17)
+        for index in (0, 1):
+            guard_part(asm, index); asm.emit("PUSH", 0x7339); asm.emit("CALLMETHOD", 0)  # Parts.IsShow
+            asm.emit("PUSH", 0); asm.emit("EQUALE")
+        asm.emit("AND"); asm.emit("CALLHLL", 36, 0, -1); asm.emit("POP")
+        asm.emit("JUMP", owned_entry)
+        asm.label("done"); asm.emit("RETURN")
+
+    return add_function("R10Bridge_ResumeBattle", 0, [], resume)
 
 
 def install_battle(add_function, redirect, replace_code, instruction, sample_hp, controls, relocate):
@@ -97,8 +138,12 @@ def install_battle(add_function, redirect, replace_code, instruction, sample_hp,
         asm.label("empty"); asm.emit("POP"); asm.emit("RETURN")
     apply_hp = add_function("R10Bridge_ApplyBattleHp", 0, [], hp_command)
 
+    update_labels = {}
+
     def update(asm):
-        battle(asm, FLAG, 0, lambda a: a.member(20)); asm.emit("IFZ", "unowned")
+        battle(asm, FLAG, 0, lambda a: a.member(20))
+        asm.label("ownership_check"); asm.emit("IFZ", "unowned")
+        asm.label("owned")
         asm.member(20); asm.global_ref(CONTEXT); asm.emit("EQUALE"); asm.emit("IFZ", "inactive")
         asm.member(18); asm.emit("PUSH", 0x73DF); asm.emit("CALLMETHOD", 0)
         asm.emit("IFZ", "inactive")
@@ -123,6 +168,7 @@ def install_battle(add_function, redirect, replace_code, instruction, sample_hp,
             asm.emit("RETURN")
         asm.label("inactive"); control(asm, 5, 0, discard=True); asm.emit("RETURN")
         asm.label("unowned"); asm.emit("RETURN")
+        update_labels.update(asm.labels)
     callback = add_function("SceneBattle@R10BridgeUpdate", 0, ["passedTime", "scaledTime"], update)
 
     def register(asm):
@@ -186,3 +232,4 @@ def install_battle(add_function, redirect, replace_code, instruction, sample_hp,
     allow_used("R10Bridge_AllowRepeatAction", 0x43987C, 0x4398A0, REPEAT_ACTIONS)
     allow_used("R10Bridge_AllowLimitedSkill", 0x439C54, 0x439C90, UNLIMITED_SKILLS)
     allow_used("R10Bridge_LimitedSkillCost", 0x438FBE, 0x438FCA, UNLIMITED_SKILLS)
+    return callback, update_labels

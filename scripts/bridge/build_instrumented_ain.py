@@ -300,7 +300,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         code_edits.append({"pc": pc, "originalHex": expected.hex().upper(), "replacementHex": replacement.hex().upper(), "reason": reason})
 
     if profile in {"full", "controls"}:
-        from battle_ain import flag, install_battle
+        from battle_ain import flag, install_battle, install_battle_resume
         # Null is the AIN value -1, as used by SceneBattle.Run; heap index zero is valid.
         def sampler(asm):
             for global_id in (0xF0, 0x104, 0x123, 0x124):
@@ -401,7 +401,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
             redirected.add(function_id)
             listing.append(f"; battle prefix {name} ({function_id:#x})")
             listing.extend(f"{row['pc']:08X} {row['op']} {row['args']}" for row in asm.rows)
-        install_battle(add_function, redirect, replace_code, instruction, sample_id, profile == "controls", at)
+        battle_callback, battle_labels = install_battle(add_function, redirect, replace_code, instruction,
+                                                        sample_id, profile == "controls", at)
     if profile == "controls":
         from controls_ain import install_load_control
         hooks[1]["controls"] = install_load_control(add_function)
@@ -435,6 +436,16 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     if profile in {"full", "controls"}:
         resume_pump, strings = install_card_resume_pump(add_function, strings, functions, card_pump, require)
         require(resume_pump == hooks[1]["cardManagement"], "Unexpected card resume pump function ID")
+        # Reuse the restored delegate and keep every previous function and return PC stable.
+        battle_resume = install_battle_resume(add_function, battle_labels["owned"])
+        branch = battle_labels["ownership_check"]
+        expected = instruction("IFZ", battle_labels["unowned"])
+        require(extended[branch:branch + len(expected)] == expected, "Unexpected battle callback ownership branch")
+        extended[branch:branch + len(expected)] = instruction("IFZ", add_function.entries[battle_resume])
+        callback_record = added_functions[battle_callback - len(functions)]
+        start = callback_record["entry"] - 6
+        callback_record["bytes"] = extended[start:start + len(callback_record["bytes"]) // 2].hex().upper()
+        listing.append(f"; {branch:08X} IFZ {add_function.entries[battle_resume]} (restore active battle)")
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))

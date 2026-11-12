@@ -18,7 +18,7 @@ enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR };
 enum { CARD_SCENE_SCOPE=12, CARD_SCENE_READY=13, CARD_RESUME_CHECK=14, CARD_READY=15 };
 enum { BATTLE_HP=14, BATTLE_AP_FULL, BATTLE_UNLIMITED_SKILLS, BATTLE_IMMUNITY, BATTLE_REPEAT, BATTLE_UNLIMITED_ACTIONS };
 enum { BATTLE_FLAG, BATTLE_ENTER, BATTLE_LEAVE, BATTLE_AP, BATTLE_CLAIM_HP, BATTLE_HP_VALUE,
-       BATTLE_FINISH_HP, BATTLE_TARGET_CHANGED, BATTLE_REFRESH_SELECTOR };
+       BATTLE_FINISH_HP, BATTLE_TARGET_CHANGED, BATTLE_REFRESH_SELECTOR, BATTLE_RESUME };
 typedef struct { LONG id, generation, enabled, state, kind, argument, argument2, context; DWORD submitted; } Command;
 typedef struct {
     LONG index, flags;
@@ -43,6 +43,7 @@ typedef struct {
     LONG cardReady, cardContext, cardSceneDepth, cardScenesAtLoad, cardResumePending;
     LONG selector, controlEnabled, battleReady; DWORD battleTick;
     LONG battleVmContext, battleTarget, battleContext, battleRules, battleAp, battleApMax, battleRefresh;
+    LONG battleResumePending;
     Command commands[HISTORY];
 } State;
 static State state;
@@ -345,6 +346,7 @@ int __cdecl Tick(int marker,int a,int b) {
     if (marker==0) {
         state.dataReady=0; state.cardReady=0; state.cardBatch=-1; state.cardBatchEnabled=0; state.scriptVersion=a; state.capabilities=b;
         state.cardSceneDepth=state.cardScenesAtLoad=state.cardResumePending=0;
+        state.battleResumePending=0;
         state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
     }
     else if (marker==1) { state.frame++; if (state.phase==0) state.phase=1; }
@@ -354,10 +356,12 @@ int __cdecl Tick(int marker,int a,int b) {
         state.cardBatch=-1; state.cardBatchEnabled=0;
         state.generation++; state.phase=2; state.loadKind=a; state.loadSlot=b; state.lastLoadOutcome=0;
         state.playerHp=state.playerHpMax=state.enemyHp=state.enemyHpMax=-1;
+        state.battleResumePending=0;
         state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
     } else if (marker==3 && state.phase==2 && state.loadKind==a) {
         // Resume restores the saved stack without executing the scene enter hooks.
         state.cardResumePending=a==2;
+        state.battleResumePending=a==2 && state.battleVmContext<0;
         if (!state.cardResumePending) state.cardSceneDepth-=state.cardScenesAtLoad;
         state.cardScenesAtLoad=0;
         state.phase=1; state.lastCompletedGeneration=state.generation; state.lastLoadOutcome=1;
@@ -427,8 +431,20 @@ int __cdecl Battle(int op,int a,int b) {
     if (state.scriptVersion==1 && (state.capabilities & BATTLE_CAPABILITY)) {
         if (op==BATTLE_ENTER || op==BATTLE_LEAVE) {
             state.battleVmContext=op==BATTLE_ENTER ? a : -1;
+            state.battleResumePending=0;
             state.controlEnabled=0;
             resetBattleSelection();
+        } else if (op==BATTLE_RESUME && state.phase==1 && state.battleResumePending) {
+            if (a==-1) result=1;
+            else if (a>=0 && b>=0) {
+                // The restored SceneBattle callback verified the live context and selector.
+                state.battleResumePending=0;
+                state.battleVmContext=a;
+                state.selector=b;
+                state.controlEnabled=0;
+                resetBattleSelection();
+                result=1;
+            }
         } else if (op==BATTLE_FINISH_HP && state.pendingId) {
             Command *c=&state.commands[state.pendingId % HISTORY];
             if (c->kind==BATTLE_HP && c->state==EXECUTING) {

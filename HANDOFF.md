@@ -15,8 +15,8 @@
 
 | 范围 | 本地证据 |
 |---|---|
-| 读档就绪状态与原复现 | `artifacts/bridge/20261112-review-fixes-managed.log`、`artifacts/bridge/20261112-review-fixes-data-probe.log`。读档期间数值不可编辑，原模拟复现的外部写入为 0。 |
-| 读档写入保护与组件安装恢复 | `artifacts/bridge/20261112-review-fixes-validation.log`。外部写入和回滚用模拟内存验证，Resume 场景用 AIN 离线测试和 x86 辅助进程验证。八版安装和逐字节恢复通过。符号链接用例因 Windows 权限不足跳过。 |
+| 读档写入保护与排队 | `artifacts/bridge/20261112-review-fixes-data-probe.log`、`artifacts/bridge/20261112-r2-queue-probe.log`。模拟验证读档期间写入为 0，排队中的数值和锁定请求跨代次失效。 |
+| Resume 与八版安装恢复 | `artifacts/bridge/20261112-r2-validation.log`。AIN 离线测试覆盖恢复场景、战斗对象和选择器判定，x86 辅助进程覆盖战斗规则与 HP 编辑的重新就绪。八版逐字节恢复通过。符号链接用例因 Windows 权限不足跳过。 |
 | MCP 独立进程 | `artifacts/bridge/20261112-review-fixes-mcp.log`。重复键返回解析错误，后续请求正常。 |
 | v0.9.1 玩家包 | `artifacts/bridge/v0.9.1-package-build.log` |
 | AIN 离线校验 | `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/` 下的 `bridge-build.json` |
@@ -27,7 +27,7 @@
 
 ## 待验证
 
-- 用中文 BugFix 隔离存档复测普通战斗、结算和选卡后的卡表恢复，以及从战斗内的暂停存档恢复时的卡片限制。
+- 用中文 BugFix 隔离存档复测普通战斗、结算和选卡后的卡表恢复。从战斗内的暂停存档恢复时，核对卡片限制、战斗开关和手动 HP 编辑。
 - 核对「宝箱卡牌可获取＋1」在低阶宝箱、困难难度和已有周目奖励时的实机效果。
 - 用各自的隔离存档核对中文 BugFix 之外七版的启动、连接、战斗写入和卡表读取。
 - 复测普通战斗的三项越界输入及最终组件。此前越界检查在辅助进程中超时。

@@ -157,8 +157,10 @@ internal static class Program
         Check(!Request("{\"op\":\"get_state\"}").GetProperty("dataReady").GetBoolean(),"load clears data snapshot readiness");
         var edit = Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"CardEdit"));
         TestCardManagement(edit);
-        TestBattleFeatures(Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Battle")));
+        var battle = Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Battle"));
+        TestBattleFeatures(battle);
         TestResumeCardManagement(edit);
+        TestResumeBattleFeatures(battle);
         Console.WriteLine($"{checks-failed} passed, {failed} failed native helper checks; simulation=true; this is not a game compatibility test.");
         return failed==0 ? 0 : 1;
     }
@@ -342,6 +344,55 @@ internal static class Program
         edit(ready,1,0);
         Check(Context() > beforeOrdinaryLoad && edit(verifyResume,0,0) == 0,
             "a successful ordinary load ends previous Resume verification");
+    }
+
+    private static void TestResumeBattleFeatures(Call battle)
+    {
+        const int restore = 9, vmContext = 123, oldSelector = 21, selector = 22, enemy = 125;
+        JsonElement State() => Request("{\"op\":\"get_state\"}");
+        int Generation() => State().GetProperty("loadGeneration").GetInt32();
+        int Context() => State().GetProperty("battleContext").GetInt32();
+        JsonElement Hp(int context) => Request(JsonSerializer.Serialize(
+            new { op = "set_battle_hp", generation = Generation(), context, argument = 1, value = 25 }));
+        string? Result(int id) => Request(JsonSerializer.Serialize(new { op = "get_command_result", id })).GetProperty("state").GetString();
+
+        tick(0,1,10223); tick(1,16,16);
+        battle(1,vmContext,0); tick(20,oldSelector,1); control(5,1,enemy);
+        foreach (string feature in new[] { "ap_full", "status_immunity" })
+        {
+            Request(JsonSerializer.Serialize(new { op = "set_feature", feature, generation = Generation(), enabled = true }));
+            tick(1,16,16);
+        }
+        int oldContext = Context();
+        int stale = Hp(oldContext).GetProperty("id").GetInt32();
+        tick(2,2,-1);
+        Check(battle(restore,-1,0) == 0 && battle(restore,vmContext,selector) == 0,
+            "battle recovery cannot run during loading");
+        tick(3,2,0); tick(1,16,16);
+        Check(battle(restore,-1,0) == 1 && battle(0,0,vmContext) == 0 &&
+            control(4,oldSelector,0) == 0 && Context() == 0 && Result(stale) == "rejected",
+            "Resume waits for the game callback and invalidates the old HP context");
+
+        Check(battle(restore,vmContext,selector) == 1 && battle(restore,-1,0) == 0 &&
+            battle(0,1,vmContext) == 1 && battle(0,4,vmContext) == 1 && battle(0,1,vmContext+1) == 0,
+            "the verified callback restores battle authority and the requested rules");
+        tick(20,selector,0);
+        Check(control(4,selector,0) == 0 && Context() == 0, "a disabled restored selector leaves HP edits unavailable");
+        tick(20,selector,1);
+        Check(control(4,selector,0) == 1 && control(4,oldSelector,0) == 0, "only the current selector authorizes selection");
+        control(5,1,enemy); battle(3,6,6);
+        int context = Context();
+        Check(context > oldContext && State().GetProperty("ap").GetInt32() == 6 &&
+            Hp(oldContext).GetProperty("error").GetString() == "battle_context_changed",
+            "the restored selector exposes AP with a new HP context");
+        int fresh = Hp(context).GetProperty("id").GetInt32();
+        Check(battle(4,0,0) == 2 && battle(5,0,0) == 25, "a fresh HP request can execute after Resume");
+        battle(6,25,0);
+        Check(Result(fresh) == "applied", "restored battle HP edit returns its observed result");
+
+        tick(2,1,0); tick(3,1,0);
+        Check(battle(restore,-1,0) == 0 && battle(restore,vmContext,selector) == 0 && battle(0,0,vmContext) == 0,
+            "an ordinary load does not rebind the previous battle");
     }
 
     private static void Check(bool condition,string message)

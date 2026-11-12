@@ -50,6 +50,10 @@ class WrapperVm:
     def battle(self, op, a, b):
         return 0
 
+    def tick(self, marker, a, b):
+        self.events.append(("tick", marker, a, b))
+        return 0
+
     def run(self, function, arguments, this, stack_values=()):
         pc, stack = function["entry"], list(stack_values)
         locals_ = list(arguments) + [bytearray() if type_id == 12 else 0 for _, type_id in function.get("locals", ())]
@@ -67,6 +71,7 @@ class WrapperVm:
             elif op == 4: stack.append("global")
             elif op == 5: stack.append("local")
             elif op == 9: stack.append(stack.pop() + stack.pop())
+            elif op == 0x0E: stack.append(stack.pop() & stack.pop())
             elif op == 0x13:
                 right, left = stack.pop(), stack.pop()
                 stack.append(int(left < right))
@@ -93,14 +98,20 @@ class WrapperVm:
                 stack.append(int(left == self.strings[right[1]]))
             elif op == 0x79: pass  # A_REF copies the top value; abstract ownership is unchanged.
             elif op == 0x5A:
+                if args == (5, 17, 13):
+                    stack.append(len(self.objects[stack.pop()]))
+                    continue
                 assert args[2] == -1
                 if args[:2] == (0, 22):
                     stack.append(self.stack_name(stack.pop()))
                     continue
+                if args[:2] == (27, 2):
+                    stack.append(int(stack.pop() in self.parts))
+                    continue
                 assert args[0] == 36
                 values = stack[-3:]; del stack[-3:]
                 if args[1] == 0:
-                    self.events.append(("tick", *values)); stack.append(0)
+                    stack.append(self.tick(*values))
                 elif args[1] == 2:
                     stack.append(self.control(*values))
                 elif args[1] == 6:
@@ -193,6 +204,10 @@ class ControlVm(WrapperVm):
         self.rules, self.ap, self.ap_max, self.statuses = 0, 3, 6, []
         self.refresh, self.hp_side, self.hp_value = False, 0, 0
         self.ordinary = True
+        self.resume_pending, self.selector, self.result_type = False, 500, 0
+        self.globals[0x110] = 700
+        self.objects.update({500: {3: 510}, 510: {0: 511}, 511: {0: 512, 1: 513}, 512: {0: 101}, 513: {0: 102}})
+        self.parts = {101: False, 102: False}
 
     def battle(self, op, a, b):
         if op == 0: return int(self.ordinary and b == 400 and (not a or self.rules & a))
@@ -202,14 +217,28 @@ class ControlVm(WrapperVm):
         if op == 6:
             self.events.append(("hp_result", a)); self.hp_side = 0
             return 0
-        if op == 8: return int(self.refresh)
+        if op == 8:
+            refresh, self.refresh = self.refresh, False
+            return int(refresh)
+        if op == 9:
+            if a == -1:
+                return int(self.resume_pending)
+            assert self.resume_pending and a == self.globals[0x124] and b == self.objects[100][17]
+            self.events.append(("resume", a, b))
+            self.ordinary, self.resume_pending, self.refresh, self.enabled, self.selector = True, False, True, False, b
+            return 1
         raise AssertionError(op)
+
+    def tick(self, marker, a, b):
+        if marker == 20:
+            self.selector, self.enabled = a, bool(b)
+        return super().tick(marker, a, b)
 
     def control(self, op, a, b):
         if op == 0: return self.action
         if op == 1: return self.arg
         if op == 2: return self.arg2
-        if op == 4: return int(self.enabled and a == 500)
+        if op == 4: return int(self.enabled and a == self.selector)
         if op == 5: self.events.append(("ready", a)); return 0
         if op == 3:
             self.events.append(("ack", a)); self.action = self.arg = self.arg2 = 0
@@ -217,6 +246,11 @@ class ControlVm(WrapperVm):
         raise AssertionError(op)
 
     def method(self, obj, function, args):
+        if function == 0x6A99:
+            assert obj == self.globals[0x110]
+            return self.result_type
+        if function == 0x739E: return self.objects[obj][0]
+        if function == 0x7339: return int(self.parts[self.objects[obj][0]])
         if function == 0x73DF: return int(self.active)
         if function == 0x6141: self.events.append(("skill_click", obj, *args)); return None
         if function == 0x6136: self.events.append(("end_turn", obj)); return None
@@ -503,6 +537,39 @@ class FullBuildTests(unittest.TestCase):
         vm.invoke("SceneBattle@R10BridgeUpdate", (16, 16))
         self.assertIn(("hp_result", -1), vm.events)
         self.assertFalse(any(event[0] == "setter" for event in vm.events))
+
+    def test_battle_callback_rebinds_resume_using_the_live_selector(self):
+        for visible in (False, True):
+            vm = ControlVm(self.generated, self.report)
+            vm.ordinary, vm.resume_pending, vm.enabled = False, True, False
+            vm.parts[102] = visible
+            vm.rules, vm.ap, vm.ap_max = AP_FULL, 0, 6
+            vm.invoke("SceneBattle@R10BridgeUpdate", (16, 16))
+            self.assertTrue(vm.ordinary)
+            self.assertFalse(vm.resume_pending)
+            self.assertEqual(vm.events[:2], [("resume", 400, 500), ("tick", 20, 500, int(not visible))])
+            if visible:
+                self.assertEqual(vm.events[2:], [("ready", 0)])
+                self.assertEqual(vm.ap, 0)
+            else:
+                self.assertEqual(vm.ap, 6)
+                self.assertIn(("ready", 1), vm.events)
+                self.assertIn(("ap", 6, 6), vm.events)
+
+    def test_resume_callback_leaves_unconfirmed_battles_unavailable(self):
+        for reason in ("no_resume", "wrong_context", "inactive_layer", "ended", "missing_part", "dead_enemy"):
+            with self.subTest(reason=reason):
+                vm = ControlVm(self.generated, self.report)
+                vm.ordinary, vm.resume_pending, vm.enabled = False, reason != "no_resume", False
+                if reason == "wrong_context": vm.objects[100][20] = 701
+                if reason == "inactive_layer": vm.active = False
+                if reason == "ended": vm.result_type = 1
+                if reason == "missing_part": del vm.parts[102]
+                if reason == "dead_enemy": vm.objects[300][0] = 0
+                vm.rules = AP_FULL
+                vm.invoke("SceneBattle@R10BridgeUpdate", (16, 16))
+                self.assertFalse(vm.ordinary)
+                self.assertEqual(vm.events, [])
 
     def test_another_scene_cannot_consume_a_command_or_reset_selection(self):
         vm = ControlVm(self.generated, self.report)
