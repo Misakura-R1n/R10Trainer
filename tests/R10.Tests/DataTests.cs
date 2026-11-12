@@ -289,6 +289,7 @@ public static class DataTests
                 Check(runtime.SetToggleAsync(FeatureId.EnemyNear, true).GetAwaiter().GetResult().Success, "Battle request rejected");
                 Wait(() => runtime.Current.Features[FeatureId.War].Active && runtime.Current.Features[FeatureId.EnemyNear].Active);
 
+                var oldRequest = runtime.CaptureDataRequest();
                 var loading = epoch with { Generation = 1, Ready = false };
                 runtime.ObserveGameLoad(loading);
                 f.Memory.Put(f.Campaign + 0xBC, 0);
@@ -305,6 +306,9 @@ public static class DataTests
 
                 runtime.ObserveGameLoad(loading with { Ready = true });
                 Wait(() => runtime.Current.Features[FeatureId.War].Active && runtime.Current.Features[FeatureId.EnemyNear].Active);
+                Check(!runtime.SetValueAsync(FeatureId.Turn, 42, oldRequest).GetAwaiter().GetResult().Success &&
+                    !runtime.SetLockAsync(FeatureId.Turn, true, oldRequest).GetAwaiter().GetResult().Success &&
+                    f.Memory.Int(f.Turn + 8) == 0, "Old prepared request escaped the actual data worker");
                 Check(runtime.SetValueAsync(FeatureId.Turn, 42).GetAwaiter().GetResult().Success && f.Memory.Int(f.Turn + 8) == 42,
                     "New epoch did not restore normal writes");
             }

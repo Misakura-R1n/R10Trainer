@@ -81,6 +81,51 @@ static class UnifiedRuntimeTests
             Check(runtime.Current.Connection == ConnectionState.Ready && runtime.Current.Features[FeatureId.Turn].CanEdit);
             Check((await runtime.TryCloseAsync()).Success);
         });
+        await test("unified queued values and locks retain the submitted load generation", async () =>
+        {
+            var fixture = new DataFixture();
+            var epoch = new GameLoadEpoch(fixture.Memory.ProcessId, "fixture:1", 1, true);
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<OperationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var bridge = new Fixture
+            {
+                Current = Snapshot(epoch.ProcessId) with { LoadEpoch = epoch },
+                Toggle = () => { entered.TrySetResult(); return release.Task; }
+            };
+            var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => new GameConnection(fixture.Memory, "fixture.ain"), _ => bridge);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+            try
+            {
+                await runtime.StartAsync();
+                while (runtime.Current.Connection != ConnectionState.Ready) await Task.Delay(10, timeout.Token);
+                var blocking = runtime.SetToggleAsync(FeatureId.Hp, true);
+                await entered.Task.WaitAsync(timeout.Token);
+                var oldWrite = runtime.SetValueAsync(FeatureId.Turn, 42);
+                var oldLock = runtime.SetLockAsync(FeatureId.Turn, true);
+                var oldComponentWrite = runtime.SetValueAsync(FeatureId.Food, 3);
+                Check(!oldWrite.IsCompleted && !oldLock.IsCompleted && !oldComponentWrite.IsCompleted);
+
+                var next = epoch with { Generation = 2 };
+                bridge.Publish(Snapshot(epoch.ProcessId, ConnectionState.Loading, false) with { LoadEpoch = next with { Ready = false } });
+                fixture.Memory.Put(fixture.Turn + 8, 7);
+                bridge.Publish(Snapshot(epoch.ProcessId) with { LoadEpoch = next });
+                release.SetResult(OperationResult.Ok);
+
+                Check((await blocking.WaitAsync(timeout.Token)).Success);
+                var rejected = await Task.WhenAll(oldWrite, oldLock, oldComponentWrite).WaitAsync(timeout.Token);
+                Check(rejected.All(result => !result.Success) && fixture.Memory.Writes.IsEmpty &&
+                    fixture.Memory.Int(fixture.Turn + 8) == 7 && !runtime.Current.Features[FeatureId.Turn].LockRequested &&
+                    bridge.Writes.SequenceEqual(new[] { "toggle:Hp:True" }));
+                Check((await runtime.SetValueAsync(FeatureId.Turn, 8)).Success && fixture.Memory.Int(fixture.Turn + 8) == 8);
+                Check((await runtime.SetLockAsync(FeatureId.Turn, true)).Success);
+                Check((await runtime.SetValueAsync(FeatureId.Food, 3)).Success && bridge.Expected == next);
+            }
+            finally
+            {
+                release.TrySetResult(OperationResult.Ok);
+                Check((await runtime.TryCloseAsync().WaitAsync(TimeSpan.FromSeconds(6))).Success);
+            }
+        });
         await test("unified unselected never discovers or routes any writes", async () =>
         {
             int created = 0;
@@ -93,7 +138,7 @@ static class UnifiedRuntimeTests
         });
         await test("unified HP and cards only use bridge while other controls use memory", async () =>
         {
-            var memory = new Fixture(); var bridge = new Fixture();
+            var memory = new Fixture(); var bridge = new Fixture { Current = Snapshot() with { LoadEpoch = new(42,"fixture:1",1,true) } };
             var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
             await runtime.StartAsync();
             Check((await runtime.SetToggleAsync(FeatureId.Hp, true)).Success);
@@ -327,9 +372,11 @@ static class UnifiedRuntimeTests
         public OperationResult CloseResult = OperationResult.Ok;
         public Exception? CloseError;
         public Func<Task<OperationResult>>? Close;
+        public Func<Task<OperationResult>>? Toggle;
         public void Publish(TrainerSnapshot snapshot) { Current = snapshot; SnapshotChanged?.Invoke(snapshot); }
         public Task StartAsync() { Starts++; return Task.CompletedTask; }
-        public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) { Writes.Add($"toggle:{id}:{enabled}"); return Task.FromResult(OperationResult.Ok); }
+        public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled)
+        { Writes.Add($"toggle:{id}:{enabled}"); return Toggle?.Invoke() ?? Task.FromResult(OperationResult.Ok); }
         public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) { Writes.Add($"value:{id}:{value}"); return Task.FromResult(OperationResult.Ok); }
         public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) { Writes.Add($"lock:{id}:{enabled}"); return Task.FromResult(OperationResult.Ok); }
         public Task<OperationResult> TryCloseAsync()

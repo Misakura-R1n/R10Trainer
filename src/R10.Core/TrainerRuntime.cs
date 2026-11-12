@@ -74,14 +74,24 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
         if (Interlocked.Exchange(ref _started, 1) == 0) _ = Task.Run(LoopAsync);
         return Task.CompletedTask;
     }
-    public Task<OperationResult> SetValueAsync(FeatureId id, decimal value)
+    // Prepare before an outer queue can delay the operation, including for a game without the bridge.
+    internal Func<bool> CaptureDataRequest()
+    {
+        var connection = Volatile.Read(ref _connection) ?? throw new InvalidOperationException("游戏未连接。");
+        var loadContextValid = _loadFence.CaptureGuard(connection.ProcessIdentity.Pid);
+        return () => ReferenceEquals(connection, Volatile.Read(ref _connection)) && loadContextValid();
+    }
+
+    public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) => SetValueAsync(id, value, null);
+
+    internal Task<OperationResult> SetValueAsync(FeatureId id, decimal value, Func<bool>? requestContext)
     {
         long revision = _loadFence.Revision;
         return Queue(() => Execute(id, () =>
         {
             if (FeatureCatalog.IsBattleHp(id)) throw new InvalidOperationException("此功能需要游戏组件。");
             if (!FeatureCatalog.ValidValue(id, value)) throw new ArgumentOutOfRangeException(nameof(value), "数值超出范围或步进不正确。");
-            var contextValid = EnsureReady(id, revision);
+            var contextValid = EnsureReady(id, revision, requestContext);
             if (id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship && IsRequested(FeatureId.Resources))
                 throw new InvalidOperationException("请先关闭资源全满，再单独修改此数值。");
             _data!.WriteValue(id, value, contextValid);
@@ -109,14 +119,16 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             _requested[other] = false; _active[other] = false; _errors.Remove(other);
         }
     }));
-    public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled)
+    public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => SetLockAsync(id, enabled, null);
+
+    internal Task<OperationResult> SetLockAsync(FeatureId id, bool enabled, Func<bool>? requestContext)
     {
         long revision = _loadFence.Revision;
         return Queue(() => Execute(id, () =>
         {
             if (!FeatureCatalog.Get(id).HasLock) throw new ArgumentException("此功能不能锁定。");
             if (!enabled) { _lockRequested[id] = false; _locks.Remove(id); _lockActive[id] = false; return; }
-            var contextValid = EnsureReady(id, revision);
+            var contextValid = EnsureReady(id, revision, requestContext);
             _locks[id] = _data!.CaptureLock(id, contextValid);
             _lockRequested[id] = true; _lockActive[id] = false;
         }));
@@ -295,13 +307,14 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
         _state = _dataFault != null ? ConnectionState.Error : GameplayReady ? ConnectionState.Ready : ConnectionState.Loading;
         _error = _dataFault ?? _scene.Error;
     }
-    private Func<bool> EnsureReady(FeatureId id, long revision)
+    private Func<bool> EnsureReady(FeatureId id, long revision, Func<bool>? requestContext)
     {
         ObserveLoadRevision();
         if (_closing || _connection == null || _data == null) throw new InvalidOperationException("游戏未连接或正在关闭。");
         if (_dataFault != null) throw new InvalidOperationException(_dataFault);
         if (!_connection.Memory.IsAlive) { DetachExited(); throw new InvalidOperationException("游戏已退出。"); }
-        var contextValid = _loadFence.CaptureGuard(_connection.Memory.ProcessId, revision);
+        var contextValid = requestContext ?? _loadFence.CaptureGuard(_connection.Memory.ProcessId, revision);
+        if (requestContext is not null && !contextValid()) throw new InvalidOperationException(GameLoadFence.SuspendedMessage);
         RefreshScene(false);
         if (!contextValid()) throw new InvalidOperationException(GameLoadFence.SuspendedMessage);
         if (!GameplayReady) throw new InvalidOperationException("等待游戏场景稳定后再操作。");

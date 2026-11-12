@@ -97,13 +97,36 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
         finally { Interlocked.Decrement(ref _transitions); _gate.Release(); Refresh(); }
     }
 
-    public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) => ExecuteAsync(id, false, runtime => runtime.SetValueAsync(id, value));
+    public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) =>
+        ExecuteAsync(id, false, (runtime, bridge) => PrepareValue(runtime, bridge, id, value), bindLoad: true);
     public Task<OperationResult> SetValueForEpochAsync(FeatureId id, decimal value, GameLoadEpoch expected) =>
-        ExecuteAsync(id, false, runtime => runtime.SetValueForEpochAsync(id, value, expected));
+        ExecuteAsync(id, false, (runtime, _) => () => runtime.SetValueForEpochAsync(id, value, expected));
     public Task<OperationResult> SetBattleHpAsync(FeatureId id, decimal value, BattleEditContext expected) =>
-        ExecuteAsync(id, false, runtime => runtime.SetBattleHpAsync(id, value, expected));
-    public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => ExecuteAsync(id, false, runtime => runtime.SetLockAsync(id, enabled));
-    public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => ExecuteAsync(id, true, runtime => runtime.SetToggleAsync(id, enabled));
+        ExecuteAsync(id, false, (runtime, _) => () => runtime.SetBattleHpAsync(id, value, expected));
+    public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => ExecuteAsync(id, false, (runtime, _) =>
+    {
+        if (!enabled || runtime is not TrainerRuntime memory) return () => runtime.SetLockAsync(id, enabled);
+        var contextValid = memory.CaptureDataRequest();
+        return () => memory.SetLockAsync(id, true, contextValid);
+    }, bindLoad: enabled);
+    public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) =>
+        ExecuteAsync(id, true, (runtime, _) => () => runtime.SetToggleAsync(id, enabled));
+
+    private static Func<Task<OperationResult>> PrepareValue(ITrainerRuntime runtime, TrainerSnapshot bridge, FeatureId id, decimal value)
+    {
+        if (runtime is TrainerRuntime memory)
+        {
+            var contextValid = memory.CaptureDataRequest();
+            return () => memory.SetValueAsync(id, value, contextValid);
+        }
+        if (FeatureCatalog.IsBattleHp(id))
+            return bridge.Battle is { } battle ? () => runtime.SetBattleHpAsync(id, value, battle) :
+                () => Task.FromResult(OperationResult.Fail("战斗目标尚未就绪。"));
+        if (BridgeTrainerRuntime.ValueFeatures.ContainsKey(id))
+            return bridge.LoadEpoch is { Ready: true } epoch ? () => runtime.SetValueForEpochAsync(id, value, epoch) :
+                () => Task.FromResult(OperationResult.Fail("等待游戏组件确认读档状态。"));
+        return () => runtime.SetValueAsync(id, value);
+    }
 
     public async Task<CardReply> ExecuteCardAsync(CardAccess expected, CardRequest request)
     {
@@ -119,25 +142,41 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
         finally { _gate.Release(); }
     }
 
-    private async Task<OperationResult> ExecuteAsync(FeatureId id, bool toggle, Func<ITrainerRuntime, Task<OperationResult>> action)
+    private async Task<OperationResult> ExecuteAsync(FeatureId id, bool toggle,
+        Func<ITrainerRuntime, TrainerSnapshot, Func<Task<OperationResult>>> prepare, bool bindLoad = false)
     {
         if (Volatile.Read(ref _transitions) != 0) return OperationResult.Fail("正在切换游戏或恢复修改，请稍后再操作。");
+        Pair? pair;
+        lock (_stateGate) pair = _pair;
+        if (pair is null) return OperationResult.Fail("请先选择游戏目录。");
+
+        var submittedBridge = pair.Bridge.Current;
+        var submittedPid = pair.Memory.Current.ProcessId;
+        if (bindLoad && submittedBridge.LoadEpoch is { Ready: false })
+            return OperationResult.Fail("游戏正在读档或组件状态未确认，请等待游戏就绪。");
+        bool componentToggle = BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id);
+        bool component = componentToggle || BridgeTrainerRuntime.ValueFeatures.ContainsKey(id) || FeatureCatalog.IsBattleHp(id);
+        Func<Task<OperationResult>> action;
+        try { action = prepare(component ? pair.Bridge : pair.Memory, submittedBridge); }
+        catch (Exception error) { return OperationResult.Fail(error.Message); }
+
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
             if (_closed || _recovering || Volatile.Read(ref _transitions) != 0) return OperationResult.Fail("正在关闭或恢复修改，请先完成恢复。");
-            if (_pair is not { } pair) return OperationResult.Fail("请先选择游戏目录。");
+            if (!ReferenceEquals(_pair, pair)) return OperationResult.Fail("所选游戏已变化，请重新操作。");
             var memory = pair.Memory.Current;
             var bridge = pair.Bridge.Current;
             if (DifferentProcesses(memory, bridge)) return OperationResult.Fail("游戏进程发生变化，请等待重新连接。");
-            if (BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id) || BridgeTrainerRuntime.ValueFeatures.ContainsKey(id) || FeatureCatalog.IsBattleHp(id))
+            if (bindLoad && (submittedPid != memory.ProcessId || submittedBridge.LoadEpoch != bridge.LoadEpoch))
+                return OperationResult.Fail("游戏会话或读档状态已变化，请重新确认后应用。");
+            if (component)
             {
-                if (toggle != BridgeTrainerRuntime.ComponentFeatures.ContainsKey(id)) return OperationResult.Fail("此组件功能不支持该操作。");
+                if (toggle != componentToggle) return OperationResult.Fail("此组件功能不支持该操作。");
                 if (id == FeatureId.EnemyHp && EnemyHpOverridden(memory)) return OperationResult.Fail("请先关闭敌人濒死或直死。");
                 if (!ComponentReady(memory, bridge) || bridge.Features.GetValueOrDefault(id)?.CanEdit != true) return OperationResult.Fail("组件功能尚未就绪，请安装新版组件并启动所选游戏。");
-                return await action(pair.Bridge).ConfigureAwait(false);
             }
-            return await action(pair.Memory).ConfigureAwait(false);
+            return await action().ConfigureAwait(false);
         }
         catch (Exception error) { return OperationResult.Fail(error.Message); }
         finally { _gate.Release(); Refresh(); }
