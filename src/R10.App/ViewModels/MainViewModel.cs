@@ -35,7 +35,11 @@ public sealed class MainViewModel : ObservableObject
     public string Page { get => _page; private set => Set(ref _page, value); }
     public string Title => Navigation.First(x => x.Key == Page).Label;
     public string Subtitle => Page switch { "battle" => "战斗中的常用操作。", "strategy" => "管理回合、兵力与战局。", "resources" => "调整当前资源与发现加成。", "growth" => "调整成长数值与辅助功能。", "cards" => "按卡名或角色查找，获取指定版本或调整角色★。", _ => "把操作留在手边，继续你的冒险。" };
-    public bool IsSimulation { get => _simulation; private set => Set(ref _simulation, value); }
+    public bool IsSimulation
+    {
+        get => _simulation;
+        private set { if (Set(ref _simulation, value)) Changed(nameof(BuildLabel)); }
+    }
     public string BuildLabel => IsSimulation ? "演示模式" : "v" + typeof(MainViewModel).Assembly.GetName().Version?.ToString(3);
     public string Status { get => _status; private set => Set(ref _status, value); }
     public string Notice { get => _notice; private set => Set(ref _notice, value); }
@@ -74,12 +78,13 @@ public sealed class MainViewModel : ObservableObject
     }
     public void Update(TrainerSnapshot snapshot)
     {
+        var previousPageState = (PageStatus, ShowPageNotice, ShowPageError);
         if (_pid != snapshot.ProcessId)
         {
             foreach (var feature in Features.Values) feature.ResetForSession();
             _pid = snapshot.ProcessId;
         }
-        IsSimulation = snapshot.IsSimulation; Changed(nameof(BuildLabel));
+        IsSimulation = snapshot.IsSimulation;
         Status = snapshot.IsSimulation && !snapshot.Status.Contains("演示", StringComparison.Ordinal) ? "演示 · " + snapshot.Status : snapshot.Status;
         ShowNotice = snapshot.Notice is not null || snapshot.Connection != ConnectionState.Ready;
         Notice = snapshot.Notice ?? (snapshot.Connection switch
@@ -97,7 +102,7 @@ public sealed class MainViewModel : ObservableObject
         foreach (var (id, feature) in Features) feature.Update(snapshot.Features.GetValueOrDefault(id) ?? new(), canCancel, snapshot.Battle);
         GameSetup.Observe(snapshot);
         Cards.Update(snapshot);
-        UpdatePageStatus();
+        if (previousPageState != (PageStatus, ShowPageNotice, ShowPageError)) UpdatePageStatus();
     }
     public void SetFooter(string value) => Footer = (IsSimulation ? "演示 · " : "") + value;
     public void SetError(string value) { Error = value; ShowError = value.Length > 0; UpdatePageStatus(); }

@@ -79,7 +79,9 @@ public sealed class FeatureViewModel : ObservableObject
     }
     public void Update(FeatureObservation observation, bool canCancel, BattleEditContext? battle = null)
     {
-        if (FeatureCatalog.IsBattleHp(Id) && _battle != battle)
+        bool battleChanged = FeatureCatalog.IsBattleHp(Id) && _battle != battle;
+        bool stateChanged = battleChanged || _observation != observation || _canCancel != canCancel;
+        if (battleChanged)
         {
             if (_dirty) _operationError = "战斗目标已变化，请重新输入。";
             _dirty = false;
@@ -89,8 +91,9 @@ public sealed class FeatureViewModel : ObservableObject
         if (IsToggle && _observation.Error is not null && observation.Error is null && observation.Requested == observation.Active)
             _operationError = null;
         _observation = observation; _canCancel = canCancel;
-        if (!_dirty && !_editing && IsNumber) { _draft = observation.Value is { } value ? Format(value) : ""; Changed(nameof(Draft)); }
-        RefreshState();
+        if (!_dirty && !_editing && IsNumber)
+            Set(ref _draft, observation.Value is { } value ? Format(value) : "", nameof(Draft));
+        if (stateChanged) RefreshState();
     }
     public void ResetForSession()
     {

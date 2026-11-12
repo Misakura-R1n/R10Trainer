@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private TaskCompletionSource<bool>? _confirmation;
     private IInputElement? _focusBeforeConfirmation;
     private bool _closing, _closed, _layoutWide;
+    private int _snapshotPending;
     private string _layoutPage = "";
     public MainWindow(ITrainerRuntime runtime, AppSettings settings, bool demo)
     {
@@ -60,11 +61,15 @@ public partial class MainWindow : Window
         catch (Exception ex) { _viewModel.SetError(ex.Message); }
         ArrangeGroups();
     }
-    private void RuntimeSnapshotChanged(TrainerSnapshot snapshot)
+    private void RuntimeSnapshotChanged(TrainerSnapshot _)
     {
-        if (_closed || Dispatcher.HasShutdownStarted) return;
-        if (Dispatcher.CheckAccess()) _viewModel.Update(snapshot);
-        else _ = Dispatcher.BeginInvoke(() => { if (!_closed) _viewModel.Update(snapshot); });
+        if (Dispatcher.HasShutdownStarted || Interlocked.Exchange(ref _snapshotPending, 1) != 0) return;
+        Dispatcher.BeginInvoke(ApplyLatestSnapshot);
+    }
+    private void ApplyLatestSnapshot()
+    {
+        Interlocked.Exchange(ref _snapshotPending, 0);
+        if (!_closed) _viewModel.Update(_runtime.Current);
     }
     private void WindowSizeChanged(object sender, SizeChangedEventArgs e)
     {

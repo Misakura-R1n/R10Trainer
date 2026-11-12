@@ -7,6 +7,26 @@ static class ConfirmationTests
 {
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("unchanged feature snapshots do not notify the UI, but a new battle invalidates the draft", () =>
+        {
+            var epoch = new GameLoadEpoch(42, "42:original", 3, true);
+            var battle = new BattleEditContext(epoch, 7);
+            var vm = new FeatureViewModel(FeatureCatalog.Get(FeatureId.EnemyHp), new Fixture(epoch),
+                _ => { }, _ => Task.FromResult(false));
+            var observation = new FeatureObservation(Value: 80, Maximum: 100, CanEdit: true);
+            vm.Update(observation, true, battle);
+            int notifications = 0;
+            vm.PropertyChanged += (_, _) => notifications++;
+            vm.ApplyCommand.CanExecuteChanged += (_, _) => notifications++;
+            vm.Update(observation with { }, true, battle with { });
+            Check(notifications == 0 && vm.Draft == "80");
+
+            vm.Draft = "75";
+            notifications = 0;
+            vm.Update(observation, true, battle with { Id = 8 });
+            Check(notifications > 0 && vm.Draft == "80" && vm.HasError);
+            return Task.CompletedTask;
+        });
         await test("battle HP draft is bound to the displayed battle and current limit", async () =>
         {
             var epoch = new GameLoadEpoch(42, "42:original", 3, true);
