@@ -4,18 +4,31 @@ import argparse
 import base64
 import json
 from pathlib import Path
+import struct
 import zlib
 from ain_profiles import LAYOUTS, VERSION_BY_SOURCE
 from build_instrumented_ain import build, sha, artifact_directory, require
 
 
-def export(source: bytes, dll: bytes) -> dict:
-    generated, report, _ = build(source, 'full')
-    version = VERSION_BY_SOURCE[report['sourceSha256']]
-    require(report['outputPlainSha256'] == version['targetPlainSha256'] and
-            report['outputPlainLength'] == version['targetPlainLength'], 'Generated AIN does not match the version registry')
+def export(source: bytes, dll: bytes, built: tuple[bytes, dict] | None = None) -> dict:
+    source_hash = sha(source)
+    version = VERSION_BY_SOURCE.get(source_hash)
+    require(version is not None, 'Unsupported source AIN')
+    if built is None:
+        generated, report, _ = build(source, 'full')
+    else:
+        generated, report = built
+    require(report['profile'] == 'full' and report['sourceSha256'] == source_hash and
+            report['outputSha256'] == sha(generated), 'Generated AIN does not match its build report')
+    require(len(generated) >= 16 and generated[:8] == b'AI2\0\0\0\0\0', 'Invalid generated AIN header')
+    length, compressed = struct.unpack_from('<II', generated, 8)
+    require(length == version['targetPlainLength'] and compressed == len(generated) - 16,
+            'Generated AIN sizes do not match the version registry')
+    decoder = zlib.decompressobj()
+    target = decoder.decompress(generated[16:], length + 1)
+    require(len(target) == length and decoder.eof and not decoder.unused_data and
+            sha(target) == version['targetPlainSha256'], 'Generated AIN does not match the version registry')
     original = zlib.decompress(source[16:])
-    target = zlib.decompress(generated[16:])
     edits = []
     shift = 0
     for name, start, end in LAYOUTS[version['id']].sections:
@@ -53,17 +66,25 @@ def export(source: bytes, dll: bytes) -> dict:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, action='append', required=True)
+    parser.add_argument('--generated-dir', type=Path, action='append',
+                        help='Directory of the already-built full AIN and report, in --source order')
     parser.add_argument('--dll', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args()
     output = artifact_directory(args.output_dir)
     dll = args.dll.read_bytes()
+    directories = args.generated_dir if args.generated_dir is not None else [None] * len(args.source)
+    require(len(directories) == len(args.source), 'Provide one generated directory per source')
     patches = {}
-    for source in args.source:
+    for source, directory in zip(args.source, directories):
         raw = source.read_bytes()
         source_hash = sha(raw)
         require(source_hash not in patches, f"Duplicate source AIN: {source}")
-        patches[source_hash] = export(raw, dll)
+        built = None if directory is None else (
+            (directory/'Rance10.ain').read_bytes(),
+            json.loads((directory/'bridge-build.json').read_text(encoding='utf-8')),
+        )
+        patches[source_hash] = export(raw, dll, built)
     recipes = [patches[source_hash] for source_hash in VERSION_BY_SOURCE if source_hash in patches]
     patch = recipes[0] if len(recipes) == 1 else {'schema': 2, 'profiles': recipes}
     output.mkdir(parents=True, exist_ok=True)

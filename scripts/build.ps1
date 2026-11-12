@@ -47,7 +47,7 @@ try {
         & $PythonPath -B scripts/bridge/test_prepare_sandbox.py
         if ($LASTEXITCODE -ne 0) { throw 'Sandbox preparation verification failed.' }
         $sourceAins = @($SourceAin) + @($CompatibilityAin | Where-Object { $_ })
-        $sourceArguments = @()
+        $recipeArguments = @()
         $roundtripArguments = @()
         $seen = @{}
         foreach ($source in $sourceAins) {
@@ -60,10 +60,10 @@ try {
             if ($AlicePath) { $ainArguments += @('--alice', $AlicePath) }
             & $PythonPath @ainArguments
             if ($LASTEXITCODE -ne 0) { throw "AIN bridge construction failed for $($gameVersion.id)." }
-            $sourceArguments += @('--source', $source)
+            $recipeArguments += @('--source', $source, '--generated-dir', $output)
             $roundtripArguments += @('--source-ain', $source)
         }
-        & $PythonPath -B scripts/bridge/export_portable_patch.py @sourceArguments --dll artifacts/bridge-native/R10Bridge.dll --output-dir artifacts/bridge/portable
+        & $PythonPath -B scripts/bridge/export_portable_patch.py @recipeArguments --dll artifacts/bridge-native/R10Bridge.dll --output-dir artifacts/bridge/portable
         if ($LASTEXITCODE -ne 0) { throw 'Portable HP patch export failed.' }
         & $DotNetPath run --project tests/R10.Tests -c $Configuration --no-build -- --bridge-ain artifacts/bridge/full/Rance10.ain
         if ($LASTEXITCODE -ne 0) { throw 'Instrumented AIN compatibility verification failed.' }
