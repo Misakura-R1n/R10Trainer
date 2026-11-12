@@ -61,6 +61,26 @@ static class UnifiedRuntimeTests
             bridge.Publish(Snapshot() with { LoadEpoch=epoch });
             Check(memory.EpochObservations==observed);
         });
+        await test("unified hides old data edit readiness as soon as the bridge reports loading", async () =>
+        {
+            var epoch = new GameLoadEpoch(42, "fixture:1", 7, true);
+            var snapshot = Snapshot();
+            var features = snapshot.Features.ToDictionary(item => item.Key, item => item.Value);
+            features[FeatureId.War] = features[FeatureId.War] with { Requested = true, Active = true };
+            features[FeatureId.Turn] = features[FeatureId.Turn] with { LockRequested = true, LockActive = true };
+            var memory = new Fixture { Current = snapshot with { Features = features } };
+            var bridge = new Fixture { Current = snapshot with { LoadEpoch = epoch } };
+            var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
+            Check(runtime.Current.Features[FeatureId.Turn].CanEdit && runtime.Current.Features[FeatureId.War].Active);
+            bridge.Publish(Snapshot(42, ConnectionState.Loading, false) with { LoadEpoch = epoch with { Generation = 8, Ready = false } });
+            var loading = runtime.Current;
+            Check(loading.Connection == ConnectionState.Loading && !loading.Features[FeatureId.Turn].CanEdit &&
+                !loading.Features[FeatureId.Turn].LockActive && loading.Features[FeatureId.War].Requested &&
+                loading.Features[FeatureId.War].CanEdit && !loading.Features[FeatureId.War].Active);
+            bridge.Publish(snapshot with { LoadEpoch = epoch with { Generation = 8 } });
+            Check(runtime.Current.Connection == ConnectionState.Ready && runtime.Current.Features[FeatureId.Turn].CanEdit);
+            Check((await runtime.TryCloseAsync()).Success);
+        });
         await test("unified unselected never discovers or routes any writes", async () =>
         {
             int created = 0;

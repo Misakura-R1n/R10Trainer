@@ -274,6 +274,80 @@ public static class DataTests
             }
             finally { Check(runtime.TryCloseAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult().Success,"Runtime close failed"); }
         });
+        test("runtime/data: loading blocks manual and continuous data writes until the new epoch is ready", () =>
+        {
+            var f = new DataFixture();
+            var runtime = new TrainerRuntime(() => new GameConnection(f.Memory, "unused-for-data-tests.ain"));
+            var epoch = new GameLoadEpoch(f.Memory.ProcessId, "fixture:1", 0, true);
+            try
+            {
+                runtime.ObserveGameLoad(epoch);
+                runtime.StartAsync().GetAwaiter().GetResult();
+                Wait(() => runtime.Current.Connection == ConnectionState.Ready);
+                runtime.ObserveGameLoad(epoch);
+                Check(runtime.SetToggleAsync(FeatureId.War, true).GetAwaiter().GetResult().Success, "War request rejected");
+                Check(runtime.SetToggleAsync(FeatureId.EnemyNear, true).GetAwaiter().GetResult().Success, "Battle request rejected");
+                Wait(() => runtime.Current.Features[FeatureId.War].Active && runtime.Current.Features[FeatureId.EnemyNear].Active);
+
+                var loading = epoch with { Generation = 1, Ready = false };
+                runtime.ObserveGameLoad(loading);
+                f.Memory.Put(f.Campaign + 0xBC, 0);
+                f.Memory.Put(f.Enemy, 500);
+                f.Memory.Writes.Clear();
+                foreach (var (id, value) in new[] { (FeatureId.Turn, 42), (FeatureId.Difficulty, -3), (FeatureId.DeathRate, 50), (FeatureId.Army, 900) })
+                    Check(!runtime.SetValueAsync(id, value).GetAwaiter().GetResult().Success, $"Loading accepted {id}");
+                Check(!runtime.SetLockAsync(FeatureId.Turn, true).GetAwaiter().GetResult().Success, "Loading accepted a new lock");
+                Wait(() => runtime.Current.Features[FeatureId.Turn].Value is null);
+                Check(!runtime.Current.Features[FeatureId.Turn].CanEdit && !runtime.Current.Features[FeatureId.War].Active &&
+                    !runtime.Current.Features[FeatureId.EnemyNear].Active && f.Memory.Writes.IsEmpty &&
+                    f.Memory.Int(f.Campaign + 0xBC) == 0 && f.Memory.Int(f.Enemy) == 500,
+                    "Loading preserved old readiness or let a maintenance write through");
+
+                runtime.ObserveGameLoad(loading with { Ready = true });
+                Wait(() => runtime.Current.Features[FeatureId.War].Active && runtime.Current.Features[FeatureId.EnemyNear].Active);
+                Check(runtime.SetValueAsync(FeatureId.Turn, 42).GetAwaiter().GetResult().Success && f.Memory.Int(f.Turn + 8) == 42,
+                    "New epoch did not restore normal writes");
+            }
+            finally { Check(runtime.TryCloseAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult().Success, "Runtime close failed"); }
+        });
+        test("data: load epoch is checked at the forward and rollback write boundaries", () =>
+        {
+            foreach (bool duringRollback in new[] { false, true })
+            {
+                var f = new DataFixture();
+                f.Engine.Refresh();
+                var fence = new GameLoadFence(() => 0);
+                var epoch = new GameLoadEpoch(f.Memory.ProcessId, "fixture:1", 0, true);
+                fence.Update(epoch);
+                var contextValid = fence.CaptureGuard(f.Memory.ProcessId);
+                uint first = f.Campaign + 0x64, second = f.Campaign + 0x68;
+                int reads = 0;
+                void LoadAtFirstFieldRead(uint address, int length)
+                {
+                    if (address != first || length != 4 || --reads != 0) return;
+                    fence.Update(epoch with { Generation = 1 });
+                }
+
+                if (duringRollback)
+                    f.Memory.BeforeWrite = (address, _) =>
+                    {
+                        if (address != second) return;
+                        reads = 1;
+                        f.Memory.BeforeRead = LoadAtFirstFieldRead;
+                        throw new IOException("second field write failed");
+                    };
+                else
+                {
+                    reads = 2;
+                    f.Memory.BeforeRead = LoadAtFirstFieldRead;
+                }
+
+                var error = Expect<DataWriteException>(() => f.Engine.WriteValue(FeatureId.Army, 900, contextValid));
+                Check(f.Memory.Writes.Count == (duringRollback ? 2 : 0), "A write crossed the observed load boundary");
+                Check(error.UnrestoredAddresses.SequenceEqual(duringRollback ? [first] : Array.Empty<uint>()) &&
+                    f.Memory.Int(first) == (duringRollback ? 900 : 100), "Rollback ownership result did not match the load transition");
+            }
+        });
         test("runtime/data: initial stability and same-PID owner replacement recapture", () =>
         {
             var f = new DataFixture();

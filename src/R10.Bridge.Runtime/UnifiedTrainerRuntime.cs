@@ -216,7 +216,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
     private static bool ComponentReady(TrainerSnapshot memory, TrainerSnapshot bridge) =>
         memory.ProcessId is { } memoryPid && memoryPid == bridge.ProcessId &&
         memory.Connection is ConnectionState.Ready or ConnectionState.Loading &&
-        bridge.Connection == ConnectionState.Ready;
+        bridge.Connection == ConnectionState.Ready && bridge.LoadEpoch?.Ready != false;
     private static bool EnemyHpOverridden(TrainerSnapshot memory) =>
         memory.Features.GetValueOrDefault(FeatureId.EnemyKill)?.Requested == true ||
         memory.Features.GetValueOrDefault(FeatureId.EnemyNear)?.Requested == true;
@@ -237,6 +237,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
                 var memory = pair.Memory.Current;
                 var bridge = pair.Bridge.Current;
                 bool ready = ComponentReady(memory, bridge), mismatch = DifferentProcesses(memory, bridge);
+                bool loadPending = bridge.LoadEpoch is { Ready: false } epoch && epoch.ProcessId == memory.ProcessId;
                 var features = memory.Features.ToDictionary(item => item.Key, item => item.Value);
                 var hp = bridge.Features.GetValueOrDefault(FeatureId.Hp) ?? new();
                 features[FeatureId.Hp] = hp with
@@ -258,8 +259,14 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
                         Active=ready && !_recovering && item.Active, Help=FeatureCatalog.Get(id).Help,
                         Detail=overridden ? "请先关闭敌人濒死或直死" : item.Detail };
                 }
-                if (mismatch || _recovering)
-                    foreach (var id in features.Keys.ToArray()) features[id] = features[id] with { CanEdit = false, Active = false, LockActive = false };
+                if (mismatch || _recovering || loadPending)
+                    foreach (var id in features.Keys.ToArray())
+                    {
+                        var item = features[id];
+                        bool canSetToggle = !mismatch && !_recovering && FeatureCatalog.Get(id).Kind == FeatureKind.Toggle && item.CanEdit;
+                        features[id] = item with { CanEdit = canSetToggle, Active = false, LockActive = false };
+                    }
+                bool waitingForLoad = loadPending && memory.Connection == ConnectionState.Ready;
                 snapshot = memory with
                 {
                     RuntimeMode = "unified", Features = features,
@@ -267,8 +274,9 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
                     CardManagementAvailable = ready && !_recovering && !mismatch && bridge.CardManagementAvailable,
                     CardContext = ready && !_recovering && !mismatch ? bridge.CardContext : 0,
                     Battle = ready && !_recovering && !mismatch ? bridge.Battle : null,
-                    Connection = _recovering ? ConnectionState.RestorePending : mismatch ? ConnectionState.Loading : memory.Connection,
-                    Status = _recovering ? "正在恢复修改" : mismatch ? "正在重新连接游戏" : memory.Status,
+                    Connection = _recovering ? ConnectionState.RestorePending : mismatch || waitingForLoad ? ConnectionState.Loading : memory.Connection,
+                    Status = _recovering ? "正在恢复修改" : mismatch ? "正在重新连接游戏" :
+                        waitingForLoad ? "等待游戏就绪" : memory.Status,
                     Error = _recoveryError ?? memory.Error,
                     Notice = _recovering ? "正在关闭功能并释放游戏连接。" : mismatch ? "游戏进程发生变化，等待重新确认。" :
                         ready ? null : "HP 保护尚未连接。可在游戏设置中安装组件，再启动所选游戏；其他功能仍按各自条件使用。"

@@ -133,7 +133,9 @@ public sealed class R10DataEngine
         return Array.AsReadOnly(values);
     }
 
-    public void WriteValue(FeatureId id, decimal value)
+    public void WriteValue(FeatureId id, decimal value) => WriteValue(id, value, null);
+
+    internal void WriteValue(FeatureId id, decimal value, Func<bool>? contextValid)
     {
         if (!FeatureCatalog.ValidValue(id, value)) throw new ArgumentOutOfRangeException(nameof(value), "数值超出允许范围。");
         var graph = RequireGameplay();
@@ -141,49 +143,51 @@ public sealed class R10DataEngine
         switch (id)
         {
             case FeatureId.Difficulty:
-                WriteSingle(Add(graph.Offsets, DifficultyOffset), integer, Guard(graph, () => true)); break;
+                WriteSingle(Add(graph.Offsets, DifficultyOffset), integer, Guard(graph, () => true), contextValid); break;
             case FeatureId.Turn:
-                WriteFields(graph, TurnTable, [8], [integer]); break;
+                WriteFields(graph, TurnTable, [8], [integer], contextValid: contextValid); break;
             case FeatureId.DeathRate:
-                WriteDeathRate(graph, checked((int)(value * 10))); break;
+                WriteDeathRate(graph, checked((int)(value * 10)), contextValid: contextValid); break;
             case FeatureId.Army:
-                WriteFields(graph, CampaignTable, ArmyOffsets, Enumerable.Repeat(integer, 4).ToArray()); break;
+                WriteFields(graph, CampaignTable, ArmyOffsets, Enumerable.Repeat(integer, 4).ToArray(), contextValid: contextValid); break;
             case FeatureId.Food: case FeatureId.Medal: case FeatureId.Friendship:
                 int offset = id == FeatureId.Food ? 0 : id == FeatureId.Medal ? 4 : 8;
                 uint resourceOwner = ValidateFields(graph, ResourcesTable, [offset], 0, 3);
-                WriteFields(graph, ResourcesTable, [offset], [integer], resourceOwner); break;
+                WriteFields(graph, ResourcesTable, [offset], [integer], resourceOwner, contextValid); break;
             case FeatureId.Unit:
-                WriteFields(graph, ResourcesTable, [0x20], [integer]); break;
+                WriteFields(graph, ResourcesTable, [0x20], [integer], contextValid: contextValid); break;
             case FeatureId.Star:
-                WriteStars(graph, integer); break;
+                WriteStars(graph, integer, contextValid); break;
             default: throw new ArgumentException("该功能不接受数值。", nameof(id));
         }
     }
 
-    public void MaintainToggle(FeatureId id)
+    public void MaintainToggle(FeatureId id) => MaintainToggle(id, null);
+
+    internal void MaintainToggle(FeatureId id, Func<bool>? contextValid)
     {
         var graph = RequireGameplay();
         switch (id)
         {
             case FeatureId.Resources:
                 uint resourceOwner = ValidateFields(graph, ResourcesTable, [0, 4, 8], 0, 3);
-                WriteFields(graph, ResourcesTable, [0, 4, 8], [3, 3, 3], resourceOwner); break;
+                WriteFields(graph, ResourcesTable, [0, 4, 8], [3, 3, 3], resourceOwner, contextValid); break;
             case FeatureId.War:
                 uint campaignOwner = ValidateFields(graph, CampaignTable, [0xBC, 0xC0, 0xC4, 0xC8], 0, 3);
-                WriteFields(graph, CampaignTable, [0xBC, 0xC0, 0xC4, 0xC8], [3, 3, 3, 3], campaignOwner); break;
+                WriteFields(graph, CampaignTable, [0xBC, 0xC0, 0xC4, 0xC8], [3, 3, 3, 3], campaignOwner, contextValid); break;
             case FeatureId.Treasure:
                 // Party.m_status -> PartyStatus.m_status -> CommonStatus.m_PerFindTreasure.
                 uint treasure = ResolveType(graph, PartyTable, 0, 1);
                 CheckRange(ReadInt(treasure, 0x34), 0, 1000, "宝箱发现加成");
                 WriteSingle(Add(treasure, 0x34), 100, Guard(graph,
-                    () => ResolveType(graph, PartyTable, 0, 1) == treasure)); break;
+                    () => ResolveType(graph, PartyTable, 0, 1) == treasure), contextValid); break;
             case FeatureId.Hp:
                 RequireBattle();
                 uint party = ResolveType(graph, PartyTable), maximumAddress = ResolveType(graph, PartyTable, 0);
                 int current = ReadInt(party, 0x10), maximum = ReadInt(maximumAddress);
                 CheckRange(maximum, 1, MaximumHp, "我方 HP 上限"); CheckRange(current, 1, maximum, "我方 HP");
                 WriteSingle(Add(party, 0x10), maximum, Guard(graph,
-                    () => ResolveType(graph, PartyTable) == party && ResolveType(graph, PartyTable, 0) == maximumAddress && ReadInt(maximumAddress) == maximum)); break;
+                    () => ResolveType(graph, PartyTable) == party && ResolveType(graph, PartyTable, 0) == maximumAddress && ReadInt(maximumAddress) == maximum), contextValid); break;
             case FeatureId.EnemyKill: case FeatureId.EnemyNear:
                 RequireBattle();
                 uint enemy = ResolveType(graph, EnemyTable);
@@ -191,7 +195,7 @@ public sealed class R10DataEngine
                 CheckRange(enemyMax, 1, MaximumHp, "敌人 HP 上限"); CheckRange(enemyCurrent, 0, enemyMax, "敌人 HP");
                 int target = id == FeatureId.EnemyKill ? 0 : Math.Min(enemyCurrent, 1);
                 WriteSingle(enemy, target, Guard(graph,
-                    () => ResolveType(graph, EnemyTable) == enemy && ReadInt(enemy, 0x28) == enemyMax)); break;
+                    () => ResolveType(graph, EnemyTable) == enemy && ReadInt(enemy, 0x28) == enemyMax), contextValid); break;
             default: throw new ArgumentException("该功能不是数据开关。", nameof(id));
         }
     }
@@ -233,8 +237,8 @@ public sealed class R10DataEngine
         bool WritablePhase() { int phase = ReadInt(turn, 12); return InRange(phase, 1, 999) && phase != 16; }
         // Cumulative R/I/D/L only; stage cache S and historical/script flags are intentionally untouched.
         WriteFields(graph, CampaignTable, [0x94, 0x90, 0x88, 0x84],
-            [tenths, tenths / 10, tenths * 300, 300000 - tenths * 300], expectedOwner,
-            () => ResolveType(graph, TurnTable) == turn && contextValid?.Invoke() != false, WritablePhase);
+            [tenths, tenths / 10, tenths * 300, 300000 - tenths * 300], expectedOwner, contextValid,
+            WritablePhase, () => ResolveType(graph, TurnTable) == turn);
     }
 
     private void RequireDeathRatePhase(PointerGraph graph)
@@ -243,7 +247,7 @@ public sealed class R10DataEngine
         if (ReadInt(turn, 12) == 16) throw new InvalidOperationException("当前阶段暂停死亡率修改，锁定目标仍保留。");
     }
 
-    private void WriteStars(PointerGraph graph, int level)
+    private void WriteStars(PointerGraph graph, int level, Func<bool>? contextValid)
     {
         int nextExperience = level switch { 10 => 259, 40 => 4525, 80 or 200 => 99999, _ => throw new ArgumentOutOfRangeException(nameof(level)) };
         uint container = ResolveData(graph, 0x404, 0);
@@ -262,27 +266,39 @@ public sealed class R10DataEngine
                 ResolveGenerated(graph, array, checked(index * 4)) == record);
             writes.Add(new(Add(record, 4), Ints(level, 0, nextExperience), guard));
         }
-        WriteTransaction(writes);
+        WriteTransaction(writes, contextValid);
     }
 
-    private void WriteFields(PointerGraph graph, int table, int[] offsets, int[] values, uint? expectedOwner = null, Func<bool>? contextValid = null, Func<bool>? writeAllowed = null)
+    private void WriteFields(PointerGraph graph, int table, int[] offsets, int[] values, uint? expectedOwner = null,
+        Func<bool>? contextValid = null, Func<bool>? writeAllowed = null, Func<bool>? ownerCheck = null)
     {
         if (offsets.Length != values.Length) throw new ArgumentException("写入字段数不匹配。");
         uint owner = ResolveType(graph, table);
         if (expectedOwner.HasValue && owner != expectedOwner.Value) throw new IOException("锁定对象已替换，未写入旧值。");
-        var guard = Guard(graph, () => ResolveType(graph, table) == owner && contextValid?.Invoke()!=false);
-        WriteTransaction(offsets.Select((offset, i) => new WriteIntent(Add(owner, offset), Ints(values[i]), guard, writeAllowed)).ToArray());
+        var guard = Guard(graph, () => ResolveType(graph, table) == owner && ownerCheck?.Invoke() != false);
+        WriteTransaction(offsets.Select((offset, i) => new WriteIntent(Add(owner, offset), Ints(values[i]), guard, writeAllowed)).ToArray(), contextValid);
     }
 
-    private void WriteSingle(uint address, int value, Func<bool> guard) => WriteTransaction([new(address, Ints(value), guard)]);
+    private void WriteSingle(uint address, int value, Func<bool> guard, Func<bool>? contextValid) =>
+        WriteTransaction([new(address, Ints(value), guard)], contextValid);
 
-    private void WriteTransaction(IReadOnlyList<WriteIntent> writes)
+    private void WriteTransaction(IReadOnlyList<WriteIntent> writes, Func<bool>? contextValid)
     {
         var before = new byte[writes.Count][];
         var completed = new bool[writes.Count];
         var attempted = new List<int>();
+        bool contextLost = false;
+        void RequireWriteContext()
+        {
+            if (contextLost || contextValid?.Invoke() == false)
+            {
+                contextLost = true;
+                throw new IOException(GameLoadFence.SuspendedMessage);
+            }
+        }
         try
         {
+            RequireWriteContext();
             // Prepare the whole batch before its first write.
             for (int i = 0; i < writes.Count; i++)
             {
@@ -296,6 +312,7 @@ public sealed class R10DataEngine
                 if (before[i].AsSpan().SequenceEqual(write.Bytes)) continue;
                 if (!write.CanWrite() || !_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(before[i]))
                     throw new IOException("写入前对象、数值或可写阶段已改变。");
+                RequireWriteContext();
                 attempted.Add(i); // Includes partial writes and failures from the native adapter.
                 Exception? writeError = null;
                 try { _memory.Write(write.Address, write.Bytes); completed[i] = true; }
@@ -306,10 +323,14 @@ public sealed class R10DataEngine
                 if (writeError is not null) throw new IOException("写入或回读失败。", writeError);
                 if (observed is null || !observed.AsSpan().SequenceEqual(write.Bytes) || !write.CanWrite())
                     throw new IOException("写入结果或对象身份校验失败。");
+                RequireWriteContext();
             }
             foreach (var write in writes)
+            {
                 if (!write.CanWrite() || !_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(write.Bytes))
                     throw new IOException("批量写入最终校验失败。");
+                RequireWriteContext();
+            }
         }
         catch (Exception ex) when (IsMemoryFailure(ex))
         {
@@ -319,8 +340,10 @@ public sealed class R10DataEngine
                 int i = attempted[n]; var write = writes[i];
                 try
                 {
+                    RequireWriteContext();
                     if (!write.Guard()) throw new IOException("原对象身份不明。");
                     byte[] current = _memory.Read(write.Address, write.Bytes.Length);
+                    RequireWriteContext();
                     if (current.AsSpan().SequenceEqual(before[i])) continue;
                     // A failed/partial native write cannot establish ownership of its readback.
                     // Only a completed write still containing our exact target is eligible.
@@ -329,9 +352,11 @@ public sealed class R10DataEngine
                     // Restoration is itself a write: re-evaluate phase now, independently of
                     // ownership. A forbidden phase must not be bypassed by the rollback path.
                     if (write.WriteAllowed?.Invoke() == false) throw new IOException("当前阶段不允许恢复写入。");
+                    RequireWriteContext();
                     _memory.Write(write.Address, before[i]);
                     if (!_memory.Read(write.Address, write.Bytes.Length).AsSpan().SequenceEqual(before[i]) || !write.Guard())
                         throw new IOException("恢复后校验失败。");
+                    RequireWriteContext();
                 }
                 catch (Exception restoreError) when (IsMemoryFailure(restoreError)) { conflicts.Add(write.Address); }
             }

@@ -62,6 +62,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
         long revision=_loadFence.Revision;
         if (revision==_loadRevision) return;
         _loadRevision=revision;
+        Suspend();
         foreach (var id in new[] { FeatureId.Turn, FeatureId.DeathRate, FeatureId.Army })
         {
             if (_lockRequested.GetValueOrDefault(id)) _errors[id]="读档或游戏会话已变化，旧锁定已取消；请确认新值后重新锁定。";
@@ -73,17 +74,21 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
         if (Interlocked.Exchange(ref _started, 1) == 0) _ = Task.Run(LoopAsync);
         return Task.CompletedTask;
     }
-    public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) => Queue(() => Execute(id, () =>
+    public Task<OperationResult> SetValueAsync(FeatureId id, decimal value)
     {
-        if (FeatureCatalog.IsBattleHp(id)) throw new InvalidOperationException("此功能需要游戏组件。");
-        if (!FeatureCatalog.ValidValue(id, value)) throw new ArgumentOutOfRangeException(nameof(value), "数值超出范围或步进不正确。");
-        EnsureReady(id);
-        if (id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship && IsRequested(FeatureId.Resources))
-            throw new InvalidOperationException("请先关闭资源全满，再单独修改此数值。");
-        _data!.WriteValue(id, value);
-        if (_lockRequested.GetValueOrDefault(id)) _locks[id] = _data.CaptureLock(id,_loadFence.CaptureGuard(_connection!.Memory.ProcessId));
-        _values = _data.ReadValues();
-    }));
+        long revision = _loadFence.Revision;
+        return Queue(() => Execute(id, () =>
+        {
+            if (FeatureCatalog.IsBattleHp(id)) throw new InvalidOperationException("此功能需要游戏组件。");
+            if (!FeatureCatalog.ValidValue(id, value)) throw new ArgumentOutOfRangeException(nameof(value), "数值超出范围或步进不正确。");
+            var contextValid = EnsureReady(id, revision);
+            if (id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship && IsRequested(FeatureId.Resources))
+                throw new InvalidOperationException("请先关闭资源全满，再单独修改此数值。");
+            _data!.WriteValue(id, value, contextValid);
+            if (_lockRequested.GetValueOrDefault(id)) _locks[id] = _data.CaptureLock(id, contextValid);
+            _values = _data.ReadValues();
+        }));
+    }
     public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => Queue(() => Execute(id, () =>
     {
         if (FeatureCatalog.Get(id).Kind != FeatureKind.Toggle) throw new ArgumentException("此功能不是开关。");
@@ -104,13 +109,18 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             _requested[other] = false; _active[other] = false; _errors.Remove(other);
         }
     }));
-    public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => Queue(() => Execute(id, () =>
+    public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled)
     {
-        if (!FeatureCatalog.Get(id).HasLock) throw new ArgumentException("此功能不能锁定。");
-        if (!enabled) { _lockRequested[id] = false; _locks.Remove(id); _lockActive[id] = false; return; }
-        EnsureReady(id);
-        _locks[id] = _data!.CaptureLock(id,_loadFence.CaptureGuard(_connection!.Memory.ProcessId)); _lockRequested[id] = true; _lockActive[id] = false;
-    }));
+        long revision = _loadFence.Revision;
+        return Queue(() => Execute(id, () =>
+        {
+            if (!FeatureCatalog.Get(id).HasLock) throw new ArgumentException("此功能不能锁定。");
+            if (!enabled) { _lockRequested[id] = false; _locks.Remove(id); _lockActive[id] = false; return; }
+            var contextValid = EnsureReady(id, revision);
+            _locks[id] = _data!.CaptureLock(id, contextValid);
+            _lockRequested[id] = true; _lockActive[id] = false;
+        }));
+    }
     public Task<OperationResult> TryCloseAsync()
     {
         if (_closed || Volatile.Read(ref _started) == 0) { _closed = true; return Task.FromResult(OperationResult.Ok); }
@@ -259,7 +269,8 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             catch (Exception ex) { _error = ex.Message; }
         }
     }
-    private bool GameplayReady => _scene?.GameplayReady == true && _stableGame >= 2;
+    private bool GameplayReady => _scene?.GameplayReady == true && _stableGame >= 2 &&
+        _connection is not null && _loadFence.Allows(_connection.Memory.ProcessId);
     private bool BattleReady => GameplayReady && _scene?.BattleReady == true && _stableBattle >= 2;
     private bool IsRequested(FeatureId id) => _requested.GetValueOrDefault(id);
     private void RefreshScene(bool slow)
@@ -284,15 +295,18 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
         _state = _dataFault != null ? ConnectionState.Error : GameplayReady ? ConnectionState.Ready : ConnectionState.Loading;
         _error = _dataFault ?? _scene.Error;
     }
-    private void EnsureReady(FeatureId id)
+    private Func<bool> EnsureReady(FeatureId id, long revision)
     {
         ObserveLoadRevision();
         if (_closing || _connection == null || _data == null) throw new InvalidOperationException("游戏未连接或正在关闭。");
         if (_dataFault != null) throw new InvalidOperationException(_dataFault);
         if (!_connection.Memory.IsAlive) { DetachExited(); throw new InvalidOperationException("游戏已退出。"); }
+        var contextValid = _loadFence.CaptureGuard(_connection.Memory.ProcessId, revision);
         RefreshScene(false);
+        if (!contextValid()) throw new InvalidOperationException(GameLoadFence.SuspendedMessage);
         if (!GameplayReady) throw new InvalidOperationException("等待游戏场景稳定后再操作。");
         if (id == FeatureId.DeathRate && !_scene!.DeathRateWritable) throw new InvalidOperationException("当前阶段暂停修改人类死亡率。");
+        return contextValid;
     }
     private void Maintain(FeatureId id)
     {
@@ -301,7 +315,11 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
         if (!IsRequested(id) || _dataFault != null) return;
         bool battle = id is FeatureId.Hp or FeatureId.EnemyKill or FeatureId.EnemyNear;
         if (battle ? !BattleReady : !GameplayReady) return;
-        try { _data!.MaintainToggle(id); _active[id] = true; _errors.Remove(id); }
+        try
+        {
+            _data!.MaintainToggle(id, _loadFence.CaptureGuard(_connection!.Memory.ProcessId));
+            _active[id] = true; _errors.Remove(id);
+        }
         catch (Exception ex) { RecordFailure(id, ex); }
         finally { SynchronizeEngine(); }
     }
@@ -309,7 +327,6 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
     {
         _lockActive[id] = false;
         ObserveLoadRevision();
-        if (_connection is null || !_loadFence.Allows(_connection.Memory.ProcessId)) return;
         if (_closing || Volatile.Read(ref _closeRequested) != 0) return;
         if (_dataFault != null || !_lockRequested.GetValueOrDefault(id) || !GameplayReady || (id == FeatureId.DeathRate && !_scene!.DeathRateWritable)) return;
         try
@@ -380,6 +397,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
         _nextPublish = now + 75;
         _publishedLocating = locating; _publishedBattleReady = BattleReady;
         _publishedRedraw = redraw; _publishedRedistribute = redistribute;
+        bool gameplayReady = GameplayReady;
         var features = new Dictionary<FeatureId, FeatureObservation>();
         foreach (var f in FeatureCatalog.All)
         {
@@ -388,18 +406,19 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             string? error = _errors.GetValueOrDefault(f.Id);
             if (!patch) error ??= _data?.ReadErrors.GetValueOrDefault(f.Id);
             if (patch && patchObservations?.TryGetValue(f.Id, out var p) == true) { requested = p.Requested; active = p.Active; error ??= p.Error; }
+            if (!patch && !gameplayReady) active = false;
             if (_state is ConnectionState.Error or ConnectionState.RestorePending or ConnectionState.Closed) active = false;
-            bool canEdit = !_closing && _connection != null && (f.Kind == FeatureKind.Toggle || GameplayReady);
+            bool canEdit = !_closing && _connection != null && (f.Kind == FeatureKind.Toggle || gameplayReady);
             if (!patch && _dataFault != null) canEdit = false;
             if (FeatureCatalog.RequiresGameComponent(f.Id)) canEdit = false;
             if (f.Id == FeatureId.DeathRate && _scene?.DeathRateWritable != true) canEdit = false;
             if (f.Id is FeatureId.Food or FeatureId.Medal or FeatureId.Friendship && IsRequested(FeatureId.Resources)) canEdit = false;
-            string? detail = f.Id == FeatureId.Army && GameplayReady && !_values.GetValueOrDefault(f.Id).HasValue
+            string? detail = f.Id == FeatureId.Army && gameplayReady && !_values.GetValueOrDefault(f.Id).HasValue
                 ? "四国数值不一致或尚未读到统一值" : null;
             if (patch && requested && !active && _patches?.IsLocating == true)
                 detail = $"正在定位脚本… {_patches.ScanProgress:P0}";
             features[f.Id] = new(_values.GetValueOrDefault(f.Id), requested, active, canEdit,
-                _lockRequested.GetValueOrDefault(f.Id), _lockActive.GetValueOrDefault(f.Id), error,
+                _lockRequested.GetValueOrDefault(f.Id), gameplayReady && _lockActive.GetValueOrDefault(f.Id), error,
                 detail);
         }
         string status = _state switch
