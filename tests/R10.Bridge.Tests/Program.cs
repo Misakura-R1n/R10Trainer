@@ -205,16 +205,32 @@ await Test("command result checks ID correlation", async () => Check((await Erro
 await Test("framing accepts UTF8 and CRLF", async () =>
 {
     using var stream = new MemoryStream(Encoding.UTF8.GetBytes("{\"x\":\"测试\"}\r\n"));
-    Check(await BoundedJsonLine.ReadAsync(stream, 100) == "{\"x\":\"测试\"}");
+    Check(await new BoundedJsonLine(stream, 100).ReadAsync() == "{\"x\":\"测试\"}");
+});
+await Test("framing preserves buffered lines and UTF8 split across blocks", async () =>
+{
+    string first = new string('x', 4095) + "测试";
+    byte[] data = Encoding.UTF8.GetBytes(first + "\r\n{}\n\n");
+    using var stream = new MemoryStream(data);
+    var reader = new BoundedJsonLine(stream, 4102); // The first line reaches the exact byte limit, including CR.
+    Check(await reader.ReadAsync() == first);
+    Check(stream.Position == data.Length && await reader.ReadAsync() == "{}");
+    Check(await reader.ReadAsync() == "" && await reader.ReadAsync() is null);
 });
 await Test("framing rejects overlimit and missing newline", async () =>
 {
-    foreach (var text in new[] { "12345\n", "1234" })
+    foreach (var text in new[] { "12345\n", "1234\r\n", "1234" })
     {
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(text));
-        try { await BoundedJsonLine.ReadAsync(stream, 4); throw new Exception("Expected framing error"); }
+        try { await new BoundedJsonLine(stream, 4).ReadAsync(); throw new Exception("Expected framing error"); }
         catch (InvalidDataException) { }
     }
+});
+await Test("framing rejects invalid UTF8", async () =>
+{
+    using var stream = new MemoryStream([0xFF, (byte)'\n']);
+    try { await new BoundedJsonLine(stream, 16).ReadAsync(); throw new Exception("Expected a decoding error"); }
+    catch (DecoderFallbackException) { }
 });
 await Test("MCP lists only implemented tools", async () =>
 {
@@ -335,16 +351,16 @@ if (OperatingSystem.IsWindows())
         var error = await Error(() => new BridgeClient(wrongPid).SetFeatureAsync("hp_guard", true, 3));
         await connected;
         Check(error.Code == "server_pid_mismatch" && !error.OutcomeUnknown);
-        Check(await BoundedJsonLine.ReadAsync(server, 4096) is null);
+        Check(await new BoundedJsonLine(server, 4096).ReadAsync() is null);
     });
-    await Test("real named pipe transport validates PID and one request framing (fixture)", async () =>
+    await Test("real named pipe transport validates PID and reads a multiblock response (fixture)", async () =>
     {
         using var server = new NamedPipeServerStream(BridgeProtocol.PipeName(Environment.ProcessId), PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         var host = Task.Run(async () =>
         {
             await server.WaitForConnectionAsync();
-            Check(await BoundedJsonLine.ReadAsync(server, 4096) == "{\"op\":\"ping\"}");
-            await BoundedJsonLine.WriteAsync(server, Ok(new { }), 4096);
+            Check(await new BoundedJsonLine(server, 4096).ReadAsync() == "{\"op\":\"ping\"}");
+            await BoundedJsonLine.WriteAsync(server, Ok(new { payload = new string('x', 32 * 1024) }), BridgeProtocol.MaximumLineBytes);
         });
         await new BridgeClient(Environment.ProcessId).PingAsync(); await host;
     });
@@ -352,7 +368,7 @@ if (OperatingSystem.IsWindows())
     {
         using var server = new NamedPipeServerStream(BridgeProtocol.PipeName(Environment.ProcessId), PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var host = Task.Run(async () => { await server.WaitForConnectionAsync(); await BoundedJsonLine.ReadAsync(server, 4096); received.SetResult(); });
+        var host = Task.Run(async () => { await server.WaitForConnectionAsync(); await new BoundedJsonLine(server, 4096).ReadAsync(); received.SetResult(); });
         var client = new BridgeClient(Environment.ProcessId, TimeSpan.FromMilliseconds(200));
         var error = await Error(() => client.SetFeatureAsync("hp_guard", true, 3));
         await host; Check(received.Task.IsCompletedSuccessfully && error.OutcomeUnknown && error.Code == "timeout");

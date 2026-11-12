@@ -47,8 +47,8 @@ public sealed class NamedPipeBridgeTransport : IBridgeTransport
             timeout.Token.ThrowIfCancellationRequested();
             submitted = true; // A partial send or a lost reply cannot safely be retried.
             await BoundedJsonLine.WriteAsync(pipe, request.GetRawText(), BridgeProtocol.MaximumLineBytes, timeout.Token).ConfigureAwait(false);
-            using var buffered = new BufferedStream(pipe, 4096);
-            var line = await BoundedJsonLine.ReadAsync(buffered, BridgeProtocol.MaximumLineBytes, timeout.Token).ConfigureAwait(false)
+            var reader = new BoundedJsonLine(pipe, BridgeProtocol.MaximumLineBytes);
+            var line = await reader.ReadAsync(timeout.Token).ConfigureAwait(false)
                 ?? throw new EndOfStreamException("The bridge closed without a response.");
             using var document = JsonDocument.Parse(line, new JsonDocumentOptions { MaxDepth = 32 });
             return document.RootElement.Clone();

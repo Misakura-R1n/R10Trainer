@@ -19,11 +19,12 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
     public async Task RunAsync(Stream input, Stream output, CancellationToken cancellationToken = default)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        using var bufferedInput = new BufferedStream(input, 4096);
+        using var source = input;
+        var reader = new BoundedJsonLine(source, BridgeProtocol.MaximumLineBytes);
         var running = new List<Task>();
         try
         {
-            while (await BoundedJsonLine.ReadAsync(bufferedInput, BridgeProtocol.MaximumLineBytes, lifetime.Token).ConfigureAwait(false) is { } line)
+            while (await reader.ReadAsync(lifetime.Token).ConfigureAwait(false) is { } line)
             {
                 foreach (var failed in running.Where(task => task.IsFaulted || task.IsCanceled)) await failed.ConfigureAwait(false);
                 running.RemoveAll(task => task.IsCompletedSuccessfully);
