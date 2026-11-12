@@ -15,7 +15,7 @@ internal static class AinPatch
 {
     private sealed record PatchBundle(int Schema, PatchRecipe[] Profiles);
     internal static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy=JsonNamingPolicy.CamelCase, WriteIndented=true, UnmappedMemberHandling=JsonUnmappedMemberHandling.Disallow };
-    internal static string Hash(byte[] data) => Convert.ToHexString(SHA256.HashData(data));
+    internal static string Hash(ReadOnlySpan<byte> data) => Convert.ToHexString(SHA256.HashData(data));
     internal static bool Same(string? left, string? right) => string.Equals(left,right,StringComparison.OrdinalIgnoreCase);
     internal static byte[] Decode(byte[] raw)
     {
@@ -29,16 +29,16 @@ internal static class AinPatch
         if (decoder.ReadByte()!=-1) throw new InvalidDataException("AIN 解压长度不匹配。");
         return plain;
     }
-    internal static byte[] Encode(byte[] plain)
+    internal static byte[] Encode(ReadOnlySpan<byte> plain)
     {
         using var packed=new MemoryStream();
         using (var encoder=new ZLibStream(packed,CompressionLevel.SmallestSize,true)) encoder.Write(plain);
-        byte[] compressed=packed.ToArray();
+        var compressed=packed.GetBuffer().AsSpan(0,checked((int)packed.Length));
         byte[] raw=new byte[16+compressed.Length];
         "AI2\0\0\0\0\0"u8.CopyTo(raw);
         BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(8),plain.Length);
         BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(12),compressed.Length);
-        compressed.CopyTo(raw,16); return raw;
+        compressed.CopyTo(raw.AsSpan(16)); return raw;
     }
     internal static PatchRecipe Read(string path, GameVersion version)
     {
@@ -83,11 +83,11 @@ internal static class AinPatch
             var replacement=Convert.FromBase64String(edit.Data);
             authorBytes=checked(authorBytes+replacement.Length);
             if (authorBytes>18*1024) throw new InvalidDataException("组件配方的变更字节超出上限。");
-            if (!Same(Hash(original.AsSpan(edit.Offset,edit.Remove).ToArray()),edit.ExpectedSha256)) throw new InvalidDataException("HP 补丁原始字节校验失败。");
+            if (!Same(Hash(original.AsSpan(edit.Offset,edit.Remove)),edit.ExpectedSha256)) throw new InvalidDataException("HP 补丁原始字节校验失败。");
             result.Write(original,cursor,edit.Offset-cursor); result.Write(replacement); cursor=edit.Offset+edit.Remove;
         }
         result.Write(original,cursor,original.Length-cursor);
-        var plain=result.ToArray();
+        var plain=result.GetBuffer().AsSpan(0,checked((int)result.Length));
         if (plain.Length!=patch.TargetPlainLength || !Same(Hash(plain),patch.TargetPlainSha256)) throw new InvalidDataException("HP 补丁输出校验失败。");
         var encoded=Encode(plain);
         if (!Same(Hash(Decode(encoded)),patch.TargetPlainSha256)) throw new InvalidDataException("HP 组件压缩后校验失败。");
