@@ -4,7 +4,7 @@
 
 | 项目 | 位置 |
 |---|---|
-| 源码 | v0.9.3。开发分支 `codex/component-optimizations`，默认分支 `codex/initial-import` |
+| 源码 | v0.9.3。仅保留默认分支 `codex/initial-import`，本地与远程均使用此分支 |
 | 本地玩家包 | `artifacts/R10Trainer-v0.9.3-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json` |
 | 多版本构建输入 | `artifacts/patch-compatibility-inputs/<版本 ID>/Rance10.ain`。`bugfix` 和 `japanese-original` 目录含各自的 EXE 与 INI |
 | 中文 BugFix 实机清单 | `artifacts/live/drop-dedup/identity.json` 记录隔离存档、组件指纹及源文件校验结果。 |
