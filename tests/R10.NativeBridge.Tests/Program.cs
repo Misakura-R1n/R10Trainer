@@ -87,7 +87,28 @@ internal static class Program
         Request(CardsRequest(true)); tick(1,16,16); cards(1,123,0); cards(4,0,0); cards(5,0,0);
         var cardState=Request("{\"op\":\"get_state\"}");
         Check(cardState.GetProperty("noDuplicateCards").GetBoolean() && cardState.GetProperty("filteredCards").GetInt32()==1 && cardState.GetProperty("fallbackCards").GetInt32()==1,"card telemetry is separate from HP");
+        Check(cards(10,0,0)==1 && cards(6,4,0)==1 && cards(7,5,0)==4 &&
+            cards(8,0,0)==1 && cards(9,0,0)==5 && cards(8,0,0)==0,
+            "reward probe supplies a fixed roll and reports the actual width");
+        Check(cards(6,1,0)==1 && cards(7,3,0)==1 && cards(7,3,0)==1 && cards(9,0,0)==0,
+            "reward probe rejects unexpected nested rolls");
+        Check(cards(6,1,0)==1 && cards(9,0,0)==1 && cards(7,5,0)==0,
+            "deterministic reward has unit width and the original RNG resumes outside probes");
+        cards(11,15,6);
+        cards(11,24,10);
+        cards(11,34,30);
+        Check(cards(12,0,0)==46 && cards(13,6,0)==15 && cards(13,7,0)==24 &&
+            cards(13,16,0)==24 && cards(13,17,0)==34 && cards(13,46,0)==34,
+            "weighted reward tickets select the original slot and variant");
+        cards(2,0,0);
+        Check(cards(12,0,0)==0 && cards(13,1,0)==0 && cards(6,1,0)==0,
+            "ending a batch clears weighted outcomes and refuses new probes");
+        cards(1,123,0);
+        cards(11,15,6);
+        cards(6,4,0);
         tick(2,1,5005); Check(cards(0,0,0)==0 && cards(3,0,0)==-1,"load invalidates borrowed array handle");
+        Check(cards(8,0,0)==0 && cards(12,0,0)==0 && cards(13,1,0)==0,
+            "load clears the pending reward probe and weighted outcomes");
         tick(3,1,0); tick(1,16,16);
         var feature=Marshal.GetDelegateForFunctionPointer<Call>(NativeLibrary.GetExport(dll,"Feature"));
         string SetFeature(string name,bool enabled,int gen=4) => JsonSerializer.Serialize(new {op="set_feature",feature=name,enabled,generation=gen});

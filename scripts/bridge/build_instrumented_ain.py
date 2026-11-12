@@ -28,7 +28,8 @@ HOOKS = [
 ]
 OP = {"PUSH": 0x00, "POP": 0x01, "REF": 0x02, "PUSHGLOBALPAGE": 0x04, "PUSHLOCALPAGE": 0x05,
       "ASSIGN": 0x19, "LT": 0x13, "LTE": 0x15, "NOTE": 0x17, "AND": 0x0E, "S_ASSIGN": 0x44, "S_EQUALE": 0x49,
-      "DELETE": 0x77, "ADD": 0x09, "EQUALE": 0x18, "JUMP": 0x2C, "IFZ": 0x2D, "IFNZ": 0x2E,
+      "DELETE": 0x77, "ADD": 0x09, "MUL": 0x0B, "DIV": 0x0C, "MOD": 0x0D,
+      "EQUALE": 0x18, "JUMP": 0x2C, "IFZ": 0x2D, "IFNZ": 0x2E,
       "RETURN": 0x2F, "CALLFUNC": 0x30, "S_PUSH": 0x41, "C_REF": 0x57,
       "CALLHLL": 0x5A, "PUSHSTRUCTPAGE": 0x5B, "CALLMETHOD": 0x5C, "FUNC": 0x61, "SWAP": 0x66,
       "A_REF": 0x79, "DUP": 0x7A, "ENDFUNC": 0x7E, "DG_NEW_FROM_METHOD": 0xFD}
@@ -175,10 +176,11 @@ class Assembler:
         return bytes(self.code)
 
 
-def new_function_record(entry: int, name: str, return_type: int, arguments: list[str], local_types=()) -> bytes:
+def new_function_record(entry: int, name: str, return_type: int, arguments: list[str | tuple[str, int]], local_types=()) -> bytes:
     result = i32(entry) + name.encode("ascii") + b"\0" + i32(return_type) + i32(-1) + i32(0)
     result += i32(len(arguments)) + i32(len(arguments) + len(local_types)) + i32(0) + i32(0)
-    for name, kind in [*((name, 10) for name in arguments), *local_types]:
+    argument_types = [(arg, 10) if isinstance(arg, str) else arg for arg in arguments]
+    for name, kind in [*argument_types, *local_types]:
         result += name.encode("ascii") + b"\0" + name.encode("ascii") + b"\0"
         result += i32(kind) + i32(-1) + i32(0) + i32(0)
     return result
@@ -275,7 +277,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     hooks[0]["tickArguments"] = [("const", 1), ("const", capabilities)]
     redirected = set()
 
-    def add_function(name: str, result: int, arguments: list[str], body, *, local_types=()) -> int:
+    def add_function(name: str, result: int, arguments: list[str | tuple[str, int]], body, *, local_types=()) -> int:
         function_id = len(functions) + len(added_functions)
         asm = Assembler(len(extended)); asm.emit("FUNC", function_id)
         body(asm); asm.emit("ENDFUNC", function_id)
@@ -372,7 +374,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
 
     if profile in {"full", "controls"}:
         from cards_ain import install_cards
-        install_cards(add_function, replace_code, instruction, at)
+        install_cards(add_function, replace_code, instruction, at, functions, sections["STR0"], encoding, require)
         if not layout.patch_managed_rerolls:
             install_features(add_function, replace_code, instruction, at)
         selector = functions[0x6041]

@@ -14,6 +14,25 @@
 #define CARD_ROW_LIMIT 4096
 #define CARD_TEXT_BYTES 64
 #define CARD_KEY_SIZE (CARD_TEXT_BYTES*4+2)
+#define REWARD_POOL_LIMIT 500
+#define REWARD_VARIANT_LIMIT 10
+#define REWARD_WEIGHT_SCALE 30
+#define REWARD_VARIANT_RADIX (REWARD_VARIANT_LIMIT+1)
+enum {
+    REWARD_ENABLED, REWARD_BATCH_BEGIN, REWARD_BATCH_END, REWARD_BATCH_ARRAY,
+    REWARD_FILTERED, REWARD_FALLBACK, REWARD_PROBE_BEGIN, REWARD_PROBE_ROLL,
+    REWARD_PROBE_ACTIVE, REWARD_PROBE_END, REWARD_POOL_RESET, REWARD_POOL_ADD,
+    REWARD_POOL_WEIGHT, REWARD_POOL_PICK
+};
+typedef struct { LONG key, cumulativeWeight; } RewardOutcome;
+static struct {
+    int ordinal, width, invalid, count, totalWeight;
+    RewardOutcome outcomes[REWARD_POOL_LIMIT*REWARD_VARIANT_LIMIT];
+} reward;
+
+static void resetRewardSelection(void) {
+    reward.ordinal=reward.width=reward.invalid=reward.count=reward.totalWeight=0;
+}
 enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR };
 enum { CARD_SCENE_SCOPE=12, CARD_SCENE_READY=13, CARD_RESUME_CHECK=14, CARD_READY=15 };
 enum { BATTLE_HP=14, BATTLE_AP_FULL, BATTLE_UNLIMITED_SKILLS, BATTLE_IMMUNITY, BATTLE_REPEAT, BATTLE_UNLIMITED_ACTIONS };
@@ -345,6 +364,7 @@ int __cdecl Tick(int marker,int a,int b) {
     state.heartbeat++; state.lastTick=GetTickCount();
     if (marker==0) {
         state.dataReady=0; state.cardReady=0; state.cardBatch=-1; state.cardBatchEnabled=0; state.scriptVersion=a; state.capabilities=b;
+        resetRewardSelection();
         state.cardSceneDepth=state.cardScenesAtLoad=state.cardResumePending=0;
         state.battleResumePending=0;
         state.controlEnabled=0; state.battleVmContext=-1; resetBattleSelection();
@@ -354,6 +374,7 @@ int __cdecl Tick(int marker,int a,int b) {
         state.dataReady=0; state.cardReady=0;
         state.cardScenesAtLoad=state.cardSceneDepth;
         state.cardBatch=-1; state.cardBatchEnabled=0;
+        resetRewardSelection();
         state.generation++; state.phase=2; state.loadKind=a; state.loadSlot=b; state.lastLoadOutcome=0;
         state.playerHp=state.playerHpMax=state.enemyHp=state.enemyHpMax=-1;
         state.battleResumePending=0;
@@ -527,16 +548,57 @@ int __cdecl Data(int op,int a,int b) {
 }
 
 int __cdecl Cards(int op,int a,int b) {
-    (void)b;
     if (initialized!=2 || GetCurrentThreadId()!=state.gameThreadId) return 0;
     EnterCriticalSection(&gate);
     LONG result=0;
-    if (op==0) result=state.cardBatchEnabled && state.cardBatch>=0;
-    else if (op==1) { state.cardBatch=a; state.cardBatchEnabled=state.noDuplicateCards && (state.capabilities & 32); }
-    else if (op==2) { state.cardBatch=-1; state.cardBatchEnabled=0; }
-    else if (op==3) result=state.cardBatch;
-    else if (op==4) state.filteredCards++;
-    else if (op==5) state.fallbackCards++;
+    int enabled=state.cardBatchEnabled && state.cardBatch>=0;
+    if (op==REWARD_ENABLED) result=enabled;
+    else if (op==REWARD_BATCH_BEGIN) {
+        resetRewardSelection();
+        state.cardBatch=a; state.cardBatchEnabled=state.noDuplicateCards && (state.capabilities & 32);
+    } else if (op==REWARD_BATCH_END) {
+        resetRewardSelection();
+        state.cardBatch=-1; state.cardBatchEnabled=0;
+    } else if (op==REWARD_BATCH_ARRAY) result=state.cardBatch;
+    else if (op==REWARD_FILTERED) state.filteredCards++;
+    else if (op==REWARD_FALLBACK) state.fallbackCards++;
+    else if (enabled) {
+        if (op==REWARD_PROBE_BEGIN && !reward.ordinal && a>=1 && a<=REWARD_VARIANT_LIMIT) {
+            reward.ordinal=a; reward.width=reward.invalid=0; result=1;
+        } else if (op==REWARD_PROBE_ROLL && reward.ordinal) {
+            // One bounded roll per name in the pinned converters. Never call
+            // the real RNG while resolving a specific outcome.
+            if (reward.width || a<1 || a>REWARD_VARIANT_LIMIT || REWARD_WEIGHT_SCALE%a || reward.ordinal>a) {
+                reward.invalid=1; result=1;
+            } else {
+                reward.width=a; result=reward.ordinal;
+            }
+        } else if (op==REWARD_PROBE_ACTIVE) result=reward.ordinal!=0;
+        else if (op==REWARD_PROBE_END && reward.ordinal) {
+            int width=reward.width ? reward.width : 1;
+            if (!reward.invalid && reward.ordinal<=width) result=width;
+            reward.ordinal=reward.width=reward.invalid=0;
+        } else if (op==REWARD_POOL_RESET && !reward.ordinal) {
+            reward.count=reward.totalWeight=0; result=1;
+        } else if (op==REWARD_POOL_ADD && !reward.ordinal && a>=REWARD_VARIANT_RADIX+1 &&
+                   a/REWARD_VARIANT_RADIX<=REWARD_POOL_LIMIT && a%REWARD_VARIANT_RADIX &&
+                   b>=1 && b<=REWARD_WEIGHT_SCALE && reward.totalWeight<=REWARD_POOL_LIMIT*REWARD_WEIGHT_SCALE-b &&
+                   reward.count<REWARD_POOL_LIMIT*REWARD_VARIANT_LIMIT) {
+            reward.totalWeight+=b;
+            reward.outcomes[reward.count++]=(RewardOutcome){a,reward.totalWeight};
+        } else if (op==REWARD_POOL_WEIGHT) result=reward.totalWeight;
+        else if (op==REWARD_POOL_PICK && reward.count) {
+            int lo=0, hi=reward.count-1;
+            if (a<1) a=1;
+            if (a>reward.totalWeight) a=reward.totalWeight;
+            while (lo<hi) {
+                int mid=lo+(hi-lo)/2;
+                if (a<=reward.outcomes[mid].cumulativeWeight) hi=mid;
+                else lo=mid+1;
+            }
+            result=reward.outcomes[lo].key;
+        }
+    }
     LeaveCriticalSection(&gate); return result;
 }
 

@@ -82,7 +82,8 @@ internal static class AinPatch
                 throw new InvalidDataException("HP 补丁范围无效。");
             var replacement=Convert.FromBase64String(edit.Data);
             authorBytes=checked(authorBytes+replacement.Length);
-            if (authorBytes>15*1024 || !Same(Hash(original.AsSpan(edit.Offset,edit.Remove).ToArray()),edit.ExpectedSha256)) throw new InvalidDataException("HP 补丁原始字节校验失败。");
+            if (authorBytes>18*1024) throw new InvalidDataException("组件配方的变更字节超出上限。");
+            if (!Same(Hash(original.AsSpan(edit.Offset,edit.Remove).ToArray()),edit.ExpectedSha256)) throw new InvalidDataException("HP 补丁原始字节校验失败。");
             result.Write(original,cursor,edit.Offset-cursor); result.Write(replacement); cursor=edit.Offset+edit.Remove;
         }
         result.Write(original,cursor,original.Length-cursor);
