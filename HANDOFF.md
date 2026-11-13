@@ -31,6 +31,7 @@
 | AIN 离线校验 | `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/` 下的 `bridge-build.json` |
 | 普通战斗与 AP | `artifacts/live/battle-features-gameplay.jsonl`。对应场景、附加测试条件和组件身份见 `battle-features-fixture.json`、`battle-features-integrity.json`。 |
 | 地图、资源、HP 保护与宝箱 | `artifacts/live/feature-audit-gameplay.jsonl`、`feature-audit-published-map.log`、`feature-audit-published-resources.log` |
+| v0.9.5 宝箱发现率写入暂停 | `tests/R10.Tests/DataTests.cs` 用模拟内存复现首次回读为 100、最终回读前游戏重算清零。修改器报「批量写入最终校验失败」「未能确认恢复」，关闭该开关并暂停外部数据写入，字段恢复到 22 后仍拒绝后续写入。`artifacts/bridge/v0.9.5-treasure-recalculation-test.log` 记录构建和检查结果。实机只读检查确认报错地址为当前队伍的宝箱发现加成字段，未实机复现该时序。 |
 | 卡片获取、共享 ★ 和存读档 | `artifacts/live/card-access-live.jsonl`、`card-management-live.jsonl` |
 | v0.9.0 战后卡片读取故障 | 中文 BugFix 运行中只读核对。桥接心跳正常，胜利结算已退出，`g_battleContext` 保留，`cardContext` 为 0。 |
 

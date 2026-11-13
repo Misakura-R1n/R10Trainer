@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -392,6 +393,45 @@ public static class DataTests
                 Wait(() => runtime.Current.Connection == ConnectionState.Ready);
                 Wait(() => runtime.Current.Features[FeatureId.Army].LockActive);
                 Check(Enumerable.Range(0, 4).All(i => f.Memory.Int(replacement + 0x64 + (uint)i * 4) == 700 + i), "Recapture restored values from previous owner");
+            }
+            finally { Check(runtime.TryCloseAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult().Success, "Runtime close failed"); }
+        });
+        test("runtime/data: treasure recalculation between readbacks reproduces the write suspension", () =>
+        {
+            var f = new DataFixture();
+            uint treasureAddress = f.CommonStatus + 0x34;
+            f.Memory.Put(treasureAddress, 22);
+            int postWriteReads = 0;
+            f.Memory.BeforeRead = (address, length) =>
+            {
+                if (address != treasureAddress || length != sizeof(int) || f.Memory.Writes.IsEmpty) return;
+                if (++postWriteReads == 2)
+                    f.Memory.Put(address, 0); // PartyStatus recalculation clears the bonus before summing it again.
+            };
+
+            var runtime = new TrainerRuntime(() => new GameConnection(f.Memory, "unused-for-data-tests.ain"));
+            try
+            {
+                runtime.StartAsync().GetAwaiter().GetResult();
+                Wait(() => runtime.Current.Connection == ConnectionState.Ready);
+                Check(runtime.SetToggleAsync(FeatureId.Treasure, true).WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult().Success,
+                    "Treasure request rejected");
+                Wait(() => runtime.Current.Connection == ConnectionState.Error);
+
+                var snapshot = runtime.Current;
+                var treasure = snapshot.Features[FeatureId.Treasure];
+                string failure = $"批量写入最终校验失败。；未能确认恢复：0x{treasureAddress:X8}";
+                Check(treasure is { Requested: false, Active: false, CanEdit: false } && treasure.Error == failure,
+                    $"Expected the treasure final verification failure, got {treasure}");
+                Check(snapshot.Error?.Contains("已暂停数据写入", StringComparison.Ordinal) == true &&
+                      snapshot.Error.EndsWith(failure, StringComparison.Ordinal), "Global suspension did not report the treasure conflict");
+
+                var write = f.Memory.Writes.Single();
+                Check(write.Address == treasureAddress && BinaryPrimitives.ReadInt32LittleEndian(write.Bytes) == 100 &&
+                      f.Memory.Int(treasureAddress) == 0, "Rollback overwrote the game's recalculation");
+                f.Memory.Put(treasureAddress, 22);
+                Check(!runtime.SetValueAsync(FeatureId.Turn, 1).WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult().Success &&
+                      f.Memory.Writes.Count == 1, "Writes resumed after the game finished recalculating");
             }
             finally { Check(runtime.TryCloseAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult().Success, "Runtime close failed"); }
         });
