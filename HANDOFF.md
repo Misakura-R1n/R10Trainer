@@ -4,9 +4,8 @@
 
 | 项目 | 位置 |
 |---|---|
-| 源码 | 默认分支 `codex/initial-import`，含尚未发布的共享物品★ |
-| v0.9.4 发布包 | `artifacts/R10Trainer-v0.9.4-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json` |
-| 共享物品★本地构建 | `artifacts/live/item-star/app/R10Trainer.exe`，同目录包含八版 `full` 组件配方。 |
+| 源码 | v0.9.5，默认分支 `codex/initial-import` |
+| 本地玩家包 | `artifacts/R10Trainer-v0.9.5-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json` |
 | 共享物品★实机副本 | `artifacts/item-star-game`。游戏已退出，隔离存档路径见 `artifacts/live/item-star/bridge-sandbox.json`。 |
 | 多版本构建输入 | `artifacts/patch-compatibility-inputs/<版本 ID>/Rance10.ain`。`bugfix` 和 `japanese-original` 目录含各自的 EXE 与 INI |
 | 中文 BugFix 实机清单 | `artifacts/live/drop-dedup/identity.json` 记录隔离存档、组件指纹及源文件校验结果。 |
@@ -28,7 +27,7 @@
 | 中文 BugFix 战斗恢复 | `artifacts/live/v0.9.2-mcp.jsonl`、`v0.9.2-player-live.jsonl`。测试入口调用游戏引擎生成中断存档，原样 `full` 组件通过 `Reload.asd` 进入 `ResumeLoad`。实测 AP 全满、双方 HP、同回合重复行动、越界和旧目标拒绝。战斗与胜利结算中拒绝卡片请求，回到地图后可读取 1,134 张卡。存档指纹见 `v0.9.2-suspend-identity.json`。 |
 | Resume 与八版安装恢复 | `artifacts/bridge/20261112-r2-validation.log`。AIN 离线测试覆盖恢复场景、战斗对象和选择器判定，x86 辅助进程覆盖战斗规则与 HP 编辑的重新就绪。八版逐字节恢复通过。符号链接用例因 Windows 权限不足跳过。 |
 | MCP 独立进程 | `artifacts/bridge/20261112-review-fixes-mcp.log`。重复键返回解析错误，后续请求正常。 |
-| v0.9.4 玩家包 | `artifacts/bridge/v0.9.4-package-build.log`、`v0.9.4-package-integrity.json`、`v0.9.4-release-check.json` |
+| v0.9.5 玩家包 | `artifacts/bridge/v0.9.5-package-build.log`、`v0.9.5-package-integrity.json`、`v0.9.5-release-check.json` |
 | AIN 离线校验 | `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/` 下的 `bridge-build.json` |
 | 普通战斗与 AP | `artifacts/live/battle-features-gameplay.jsonl`。对应场景、附加测试条件和组件身份见 `battle-features-fixture.json`、`battle-features-integrity.json`。 |
 | 地图、资源、HP 保护与宝箱 | `artifacts/live/feature-audit-gameplay.jsonl`、`feature-audit-published-map.log`、`feature-audit-published-resources.log` |

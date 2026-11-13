@@ -10,7 +10,7 @@
     <RootNamespace>R10.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets/R10Trainer.ico</ApplicationIcon>
-    <Version>0.9.4</Version>
+    <Version>0.9.5</Version>
     <Description>兰斯 10 独立修改器</Description>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
