@@ -41,6 +41,7 @@ public sealed class BridgeClient : IBridgeClient
         { ResourcesFull = response.TryGetProperty("resourcesFull", out var full) && full.ValueKind == JsonValueKind.True, DataReady = response.TryGetProperty("dataReady", out var data) && data.ValueKind == JsonValueKind.True, Food=NullableInteger(response,"food"), Medal=NullableInteger(response,"medal"), Friendship=NullableInteger(response,"friendship"), Unit=NullableInteger(response,"unit"), FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True,
             CardContext = response.TryGetProperty("cardContext", out _) ? BoundedInteger(response, "cardContext", int.MaxValue) : 0,
             CardBatchReadAvailable = response.TryGetProperty("cardBatchReadAvailable", out _) && Boolean(response, "cardBatchReadAvailable"),
+            ItemStarAvailable = response.TryGetProperty("itemStarAvailable", out _) && Boolean(response, "itemStarAvailable"),
             ExtraTreasurePick = response.TryGetProperty("extraTreasurePick", out _) && Boolean(response, "extraTreasurePick"),
             OrdinaryBattle = response.TryGetProperty("ordinaryBattle", out _) && Boolean(response, "ordinaryBattle"),
             BattleContext = response.TryGetProperty("battleContext", out _) ? BoundedInteger(response, "battleContext", int.MaxValue) : 0,
@@ -92,10 +93,16 @@ public sealed class BridgeClient : IBridgeClient
     public async Task<BridgeCommand> SubmitCardForSessionAsync(string session, long generation, int context, CardRequest request, CancellationToken cancellationToken = default)
     {
         ValidateSession(session);
+        bool validTarget = request.Operation switch
+        {
+            CardOperation.SetStar => request.Star >= 0,
+            CardOperation.SetItemStar => request.Star is >= 0 and <= CardRequest.MaximumItemStar,
+            _ => request.Star == 0
+        };
         if (generation < 0 || context <= 0 || request.Index is < 0 or >= CardRequest.RowLimit ||
-            (!request.IsPage && request.Operation is < CardOperation.Inspect or > CardOperation.SetStar) ||
-            (request.Operation == CardOperation.SetStar ? request.Star < 0 : request.Star != 0) ||
-            (request.IsPage ? request.Key.Length != 0 : request.Key.Length is < 3 or > 257))
+            (!request.IsPage && !request.IsItemStar && request.Operation is < CardOperation.Inspect or > CardOperation.SetStar) ||
+            !validTarget || (request.IsItemStar && request.Index != 0) ||
+            (request.IsPage || request.IsItemStar ? request.Key.Length != 0 : request.Key.Length is < 3 or > 257))
             throw new BridgeException("invalid_card_request", "卡片、读档状态或目标★无效。");
         var response = await ExchangeAsync(new { op = "card", action = (int)request.Operation, argument = request.Index,
             argument2 = request.Star, generation, context, key = request.Key }, request.Writes, cancellationToken).ConfigureAwait(false);
@@ -176,6 +183,13 @@ public sealed class BridgeClient : IBridgeClient
 
     private static CardReply? ParseCardResult(JsonElement response)
     {
+        if (response.TryGetProperty("itemStar", out _))
+        {
+            int level = BoundedInteger(response, "itemStar", int.MaxValue);
+            int effective = BoundedInteger(response, "effectiveItemStar", int.MaxValue);
+            if (effective != level && effective != 2L * level) throw Invalid("effectiveItemStar");
+            return new(0, []) { ItemStar = new(level, effective) };
+        }
         if (response.TryGetProperty("cardRows", out var rows)) return ParseCards(response, rows);
         if (!response.TryGetProperty("cardOwned", out _)) return null;
         int total = BoundedInteger(response, "cardTotal", CardRequest.RowLimit);

@@ -88,7 +88,7 @@ static class ConfirmationTests
         await test("a collectible item can be granted without exposing role growth", () =>
         {
             var runtime = new Fixture(new GameLoadEpoch(42, "42:original", 3, true));
-            var vm = new CardManagementViewModel(runtime, _ => Task.FromResult(false));
+            var vm = new CardManagementViewModel(runtime, (_, _) => Task.FromResult(false));
             vm.Update(runtime.Current);
             vm.SetActive(true);
             vm.Selected = vm.Rows.Single(card => card == Fixture.Item);
@@ -102,7 +102,7 @@ static class ConfirmationTests
             var epoch = new GameLoadEpoch(42, "42:original", 3, true);
             var runtime = new Fixture(epoch);
             var snapshot = runtime.Current with { CardBatchReadAvailable = true };
-            var vm = new CardManagementViewModel(runtime, _ => Task.FromResult(false));
+            var vm = new CardManagementViewModel(runtime, (_, _) => Task.FromResult(false));
             vm.Update(snapshot); vm.SetActive(true);
             Check(vm.Rows.Single(card => card.Index == Fixture.Item.Index) == Fixture.Item);
             vm.Update(snapshot with { CardContext = 6 });
@@ -120,7 +120,7 @@ static class ConfirmationTests
                 var runtime = new Fixture(epoch);
                 var answer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 var shown = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-                var vm = new CardManagementViewModel(runtime, text => { shown.SetResult(text); return answer.Task; });
+                var vm = new CardManagementViewModel(runtime, (_, text) => { shown.SetResult(text); return answer.Task; });
                 vm.Update(runtime.Current);
                 vm.SetActive(true);
                 vm.Selected = vm.Rows[0];
@@ -139,6 +139,43 @@ static class ConfirmationTests
                 await finished.Task.WaitAsync(TimeSpan.FromSeconds(3));
                 Check(loadDuringConfirmation ? runtime.CardWrite is null :
                     runtime.CardWrite == (new CardAccess(epoch, 5), new CardRequest(CardOperation.SetStar, Fixture.Card.Index, Fixture.Card.Key, 80)));
+            }
+        });
+        await test("the shared item star editor needs no selected card and cancels a stale confirmation", async () =>
+        {
+            var epoch = new GameLoadEpoch(42, "42:original", 3, true);
+            foreach (bool loadDuringConfirmation in new[] { false, true })
+            {
+                var runtime = new Fixture(epoch);
+                var snapshot = runtime.Current with { ItemStarAvailable = true };
+                var answer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var vm = new CardManagementViewModel(runtime, (title, _) =>
+                {
+                    Check(title == "修改物品★等级");
+                    return answer.Task;
+                });
+                vm.Update(runtime.Current);
+                vm.SetActive(true);
+                Check(!vm.CanEditItemStar);
+                vm.Update(snapshot);
+                Check(vm.Selected is null && vm.CanEditItemStar && vm.ItemStarText == "5" && vm.ItemStarLabel.Contains("★10"));
+                vm.ItemStarText = "1000";
+                Check(!vm.ApplyItemStarCommand.CanExecute(null));
+                vm.ItemStarText = "42";
+                Check(vm.ApplyItemStarCommand.CanExecute(null));
+                var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                vm.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName == nameof(vm.Status) && vm.Status.Contains(loadDuringConfirmation ? "重新读取物品" : "已将共享物品"))
+                        finished.TrySetResult();
+                };
+                vm.ApplyItemStarCommand.Execute(null);
+                if (loadDuringConfirmation) vm.Update(snapshot with { LoadEpoch = epoch with { Generation = 4 }, CardContext = 6 });
+                answer.SetResult(true);
+                await finished.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Check(loadDuringConfirmation ? runtime.CardWrite is null :
+                    runtime.CardWrite == (new CardAccess(epoch, 5), new CardRequest(CardOperation.SetItemStar, 0, Star: 42)) &&
+                    vm.ItemStarLabel.Contains("★84"));
             }
         });
     }
@@ -162,6 +199,11 @@ static class ConfirmationTests
         public Task<CardReply> ExecuteCardAsync(CardAccess expected, CardRequest request)
         {
             if (request.Writes) CardWrite = (expected, request);
+            if (request.IsItemStar)
+            {
+                int level = request.Writes ? request.Star : 5;
+                return Task.FromResult(new CardReply(0, []) { ItemStar = new(level, level * 2) });
+            }
             if (request.IsPage)
             {
                 CardReads.Add(request.Operation);

@@ -28,7 +28,7 @@ HOOKS = [
 ]
 OP = {"PUSH": 0x00, "POP": 0x01, "REF": 0x02, "PUSHGLOBALPAGE": 0x04, "PUSHLOCALPAGE": 0x05,
       "ASSIGN": 0x19, "LT": 0x13, "LTE": 0x15, "NOTE": 0x17, "AND": 0x0E, "S_ASSIGN": 0x44, "S_EQUALE": 0x49,
-      "DELETE": 0x77, "ADD": 0x09, "MUL": 0x0B, "DIV": 0x0C, "MOD": 0x0D,
+      "DELETE": 0x77, "ADD": 0x09, "SUB": 0x0A, "MUL": 0x0B, "DIV": 0x0C, "MOD": 0x0D,
       "EQUALE": 0x18, "JUMP": 0x2C, "IFZ": 0x2D, "IFNZ": 0x2E,
       "RETURN": 0x2F, "CALLFUNC": 0x30, "S_PUSH": 0x41, "C_REF": 0x57,
       "CALLHLL": 0x5A, "PUSHSTRUCTPAGE": 0x5B, "CALLMETHOD": 0x5C, "FUNC": 0x61, "SWAP": 0x66,
@@ -269,7 +269,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     hooks = [dict(hook) for hook in HOOKS]
     capabilities = 2047 if profile == "controls" else 2031 if profile == "full" else 1
     if profile in {"full", "controls"}:
-        capabilities |= EXTRA_TREASURE_PICK_CAPABILITY
+        from card_management_ain import ITEM_STAR_CAPABILITY
+        capabilities |= EXTRA_TREASURE_PICK_CAPABILITY | ITEM_STAR_CAPABILITY
         if layout.code_page == 932:
             capabilities |= 2048
         if layout.patch_managed_rerolls:
@@ -300,6 +301,17 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         require(extended[pc:pc + len(expected)] == expected, "Overlapping callsite edits")
         extended[pc:pc + len(expected)] = replacement
         code_edits.append({"pc": pc, "originalHex": expected.hex().upper(), "replacementHex": replacement.hex().upper(), "reason": reason})
+
+    def replace_added_target(function_id, pc, op, old_target, new_target, reason):
+        record = added_functions[function_id - len(functions)]
+        start = record["entry"] - 6
+        end = start + len(record["bytes"]) // 2
+        expected, replacement = instruction(op, old_target), instruction(op, new_target)
+        require(start <= pc and pc + len(expected) <= end and
+                extended[pc:pc + len(expected)] == expected, "Generated callsite mismatch: " + reason)
+        extended[pc:pc + len(expected)] = replacement
+        record["bytes"] = extended[start:end].hex().upper()
+        listing.append(f"; {pc:08X} {op} {new_target} ({reason})")
 
     if profile in {"full", "controls"}:
         from battle_ain import flag, install_battle, install_battle_resume
@@ -384,7 +396,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         install_extra_treasure_pick(add_function, replace_code, instruction, entry, layout.has_extra_treasure_bonus)
         from data_ain import install_data
         hooks[1]["data"] = install_data(add_function)
-        from card_management_ain import install_card_management, install_card_resume_pump, install_card_scene_guards
+        from card_management_ain import install_card_management, install_card_resume_pump, install_card_scene_guards, install_item_star
         install_card_scene_guards(add_function, replace_code, instruction, at)
         hooks[1]["cardManagement"] = install_card_management(add_function, sections["STR0"], encoding)
 
@@ -436,18 +448,14 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         listing.append(f"; {hook['name']} -> Tick marker {hook['marker']} -> original body")
         listing.extend(f"{row['pc']:08X} {row['op']} " + " ".join(str(a) for a in row["args"]) for row in rows)
     if profile in {"full", "controls"}:
-        resume_pump, strings = install_card_resume_pump(add_function, strings, functions, card_pump, require)
+        resume_pump, strings, card_call = install_card_resume_pump(add_function, strings, functions, card_pump, require)
         require(resume_pump == hooks[1]["cardManagement"], "Unexpected card resume pump function ID")
         # Reuse the restored delegate and keep every previous function and return PC stable.
         battle_resume = install_battle_resume(add_function, battle_labels["owned"])
-        branch = battle_labels["ownership_check"]
-        expected = instruction("IFZ", battle_labels["unowned"])
-        require(extended[branch:branch + len(expected)] == expected, "Unexpected battle callback ownership branch")
-        extended[branch:branch + len(expected)] = instruction("IFZ", add_function.entries[battle_resume])
-        callback_record = added_functions[battle_callback - len(functions)]
-        start = callback_record["entry"] - 6
-        callback_record["bytes"] = extended[start:start + len(callback_record["bytes"]) // 2].hex().upper()
-        listing.append(f"; {branch:08X} IFZ {add_function.entries[battle_resume]} (restore active battle)")
+        replace_added_target(battle_callback, battle_labels["ownership_check"], "IFZ", battle_labels["unowned"],
+                             add_function.entries[battle_resume], "restore active battle")
+        item_star = install_item_star(add_function, card_pump, functions, require)
+        replace_added_target(resume_pump, card_call, "CALLFUNC", card_pump, item_star, "service card and shared item star requests")
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))

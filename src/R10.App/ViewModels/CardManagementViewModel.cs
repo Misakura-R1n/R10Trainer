@@ -8,32 +8,39 @@ namespace R10.App.ViewModels;
 public sealed class CardManagementViewModel : ObservableObject
 {
     private readonly ICardManagementRuntime? _runtime;
-    private readonly Func<string, Task<bool>> _confirmStar;
+    private readonly Func<string, string, Task<bool>> _confirm;
     private CardAccess? _access;
-    private bool _active, _busy, _batchReads;
+    private bool _active, _busy, _batchReads, _itemStarAvailable;
     private IReadOnlyList<CardEntry> _catalog = [], _rows = [], _cachedCatalog = [];
     private string? _catalogSession;
     private CardEntry? _selected;
     private CardReply? _detail;
-    private string _search = "", _starText = "", _status = "";
+    private ItemStarLevel? _itemStar;
+    private string _search = "", _starText = "", _itemStarText = "", _status = "";
     private int _filter;
 
-    public CardManagementViewModel(ITrainerRuntime runtime, Func<string, Task<bool>> confirmStar)
+    public CardManagementViewModel(ITrainerRuntime runtime, Func<string, string, Task<bool>> confirm)
     {
         _runtime = runtime as ICardManagementRuntime;
-        _confirmStar = confirmStar;
+        _confirm = confirm;
         RefreshCommand = new(RefreshAsync, () => CanBrowse);
         GrantCommand = new(GrantAsync, () => CanBrowse && _detail?.Rows[0].CanGrant == true);
         ApplyStarCommand = new(ApplyStarAsync, () => CanEditStar && ValidStar(out _));
+        ApplyItemStarCommand = new(ApplyItemStarAsync, () => CanEditItemStar && ValidItemStar(out _));
     }
 
     public AsyncCommand RefreshCommand { get; }
     public AsyncCommand GrantCommand { get; }
     public AsyncCommand ApplyStarCommand { get; }
+    public AsyncCommand ApplyItemStarCommand { get; }
     public bool IsConnected => _access is not null;
     public bool CanBrowse => IsConnected && !_busy;
     public bool HasSelection => Selected is not null;
     public bool CanEditStar => CanBrowse && _detail?.Star is not null;
+    public bool CanEditItemStar => CanBrowse && _itemStarAvailable && _itemStar is not null;
+    public string ItemStarLabel => _itemStar is { } level
+        ? $"基础 ★{level.Base}　·　生效 ★{level.Effective}"
+        : IsConnected && !_itemStarAvailable ? "需要新版游戏组件" : "等待读取物品★";
     public string Status { get => _status; private set => Set(ref _status, value); }
     public string Search
     {
@@ -49,6 +56,11 @@ public sealed class CardManagementViewModel : ObservableObject
     {
         get => _starText;
         set { if (Set(ref _starText, value)) ApplyStarCommand.Refresh(); }
+    }
+    public string ItemStarText
+    {
+        get => _itemStarText;
+        set { if (Set(ref _itemStarText, value)) ApplyItemStarCommand.Refresh(); }
     }
     public IReadOnlyList<CardEntry> Rows { get => _rows; private set => Set(ref _rows, value); }
     public string CountLabel => $"显示 {Rows.Count} / {_catalog.Count} 张";
@@ -76,8 +88,11 @@ public sealed class CardManagementViewModel : ObservableObject
 
     public void SetActive(bool active)
     {
+        if (_active == active) return;
         _active = active;
-        if (active && CanBrowse && _catalog.Count == 0) _ = RefreshAsync();
+        if (!active || !CanBrowse) return;
+        if (_catalog.Count == 0) _ = RefreshAsync();
+        else if (_itemStarAvailable) _ = RunAsync(ReadItemStarAsync);
     }
 
     public void Update(TrainerSnapshot snapshot)
@@ -85,12 +100,22 @@ public sealed class CardManagementViewModel : ObservableObject
         var next = _runtime is not null && snapshot.LoadEpoch is { Ready: true } epoch && snapshot.CardContext > 0
             ? new CardAccess(epoch, snapshot.CardContext) : null;
         _batchReads = snapshot.CardBatchReadAvailable;
+        bool itemStarChanged = _itemStarAvailable != snapshot.ItemStarAvailable;
+        _itemStarAvailable = snapshot.ItemStarAvailable;
         if (next is not null && _catalogSession != next.Epoch.Session)
         {
             _catalogSession = next.Epoch.Session;
             _cachedCatalog = [];
         }
-        if (_access == next && next is not null) return;
+        if (_access == next && next is not null)
+        {
+            if (itemStarChanged)
+            {
+                ShowItemStar(null);
+                if (_active && CanBrowse && _itemStarAvailable) _ = RunAsync(ReadItemStarAsync);
+            }
+            return;
+        }
         if (_access != next)
         {
             _access = next;
@@ -98,7 +123,7 @@ public sealed class CardManagementViewModel : ObservableObject
             _catalog = [];
             FilterRows();
             Changed(nameof(IsConnected));
-            UpdateActions();
+            ShowItemStar(null);
         }
         if (next is null)
             Status = snapshot.IsSimulation ? "演示模式下显示页面布局。连接游戏后可读取卡片。"
@@ -120,7 +145,15 @@ public sealed class CardManagementViewModel : ObservableObject
         _catalog = _cachedCatalog = rows;
         FilterRows();
         Status = "请选择要获取或调整的卡片版本。";
+        if (_itemStarAvailable) await ReadItemStarAsync(access);
     });
+
+    private async Task ReadItemStarAsync(CardAccess access)
+    {
+        ShowItemStar(null);
+        var result = await _runtime!.ExecuteCardAsync(access, new(CardOperation.ReadItemStar, 0));
+        if (_access == access && _itemStarAvailable) ShowItemStar(result.ItemStar);
+    }
 
     private async Task<IReadOnlyList<CardEntry>?> ReadCatalogAsync(CardAccess access, CardOperation operation)
     {
@@ -180,7 +213,7 @@ public sealed class CardManagementViewModel : ObservableObject
         Selected = Rows.FirstOrDefault(item => item.Index == updated.Index);
         if (Selected is not null) ShowDetails(result);
         Status = $"已获取 {updated.Id}。请在游戏中保存进度。";
-    }, write: true);
+    }, () => ShowDetails(null));
 
     private Task ApplyStarAsync() => RunAsync(async access =>
     {
@@ -188,7 +221,7 @@ public sealed class CardManagementViewModel : ObservableObject
         var related = _catalog.Where(item => item.Owned && item.HasRoleGrowth && item.CharacterId == card.CharacterId).ToArray();
         string versions = string.Join("、", related.Take(5).Select(item => item.Id));
         if (related.Length > 5) versions += $" 等 {related.Length} 张";
-        if (!await _confirmStar($"将 {card.CharacterId} 的 ★ 从 {current} 设为 {star}。同角色版本共享 ★。当前持有 {versions}。修改会清空当前经验，可能影响继承。"))
+        if (!await _confirm("修改角色★等级", $"将 {card.CharacterId} 的 ★ 从 {current} 设为 {star}。同角色版本共享 ★。当前持有 {versions}。修改会清空当前经验，可能影响继承。"))
             return;
         if (_access != access || Selected?.Key != card.Key)
         {
@@ -199,13 +232,32 @@ public sealed class CardManagementViewModel : ObservableObject
         if (_access != access) return;
         ShowDetails(result);
         Status = $"已将 {card.CharacterId} 设为 ★{result.Star}。请在游戏中保存进度。";
-    }, write: true);
+    }, () => ShowDetails(null));
+
+    private Task ApplyItemStarAsync() => RunAsync(async access =>
+    {
+        if (_itemStar is not { } level || !ValidItemStar(out int star)) return;
+        if (!await _confirm("修改物品★等级", $"将共享物品★从 {level.Base} 设为 {star}。当前存档的装备与道具将按新星级重算属性。")) return;
+        if (_access != access || !_itemStarAvailable)
+        {
+            Status = "游戏或读档状态已变化，请重新读取物品★。";
+            return;
+        }
+        var result = await _runtime!.ExecuteCardAsync(access, new(CardOperation.SetItemStar, 0, Star: star));
+        if (_access != access || !_itemStarAvailable) return;
+        ShowItemStar(result.ItemStar);
+        Status = $"已将共享物品★设为 {star}。请在游戏中保存进度。";
+    }, () => ShowItemStar(null));
 
     private bool ValidStar(out int star) =>
         int.TryParse(StarText, NumberStyles.None, CultureInfo.InvariantCulture, out star) &&
         _detail is { Star: { } current } && star >= 0 && star <= _detail.MaxStar && star != current;
 
-    private async Task RunAsync(Func<CardAccess, Task> action, bool write = false)
+    private bool ValidItemStar(out int star) =>
+        int.TryParse(ItemStarText, NumberStyles.None, CultureInfo.InvariantCulture, out star) &&
+        _itemStar is { } level && star is >= 0 and <= CardRequest.MaximumItemStar && star != level.Base;
+
+    private async Task RunAsync(Func<CardAccess, Task> action, Action? clearOnWriteFailure = null)
     {
         if (_busy || _access is not { } access) return;
         _busy = true;
@@ -215,8 +267,8 @@ public sealed class CardManagementViewModel : ObservableObject
         {
             if (_access == access)
             {
-                if (write) ShowDetails(null);
-                Status = write && error.OutcomeUnknown ? "操作结果尚未确认，请重新读取卡片后核对。" : error.Message;
+                clearOnWriteFailure?.Invoke();
+                Status = clearOnWriteFailure is not null && error.OutcomeUnknown ? "操作结果尚未确认，请刷新后核对。" : error.Message;
             }
         }
         finally
@@ -245,12 +297,22 @@ public sealed class CardManagementViewModel : ObservableObject
         UpdateActions();
     }
 
+    private void ShowItemStar(ItemStarLevel? level)
+    {
+        _itemStar = level;
+        ItemStarText = level?.Base.ToString(CultureInfo.InvariantCulture) ?? "";
+        Changed(nameof(ItemStarLabel));
+        UpdateActions();
+    }
+
     private void UpdateActions()
     {
         Changed(nameof(CanBrowse));
         Changed(nameof(CanEditStar));
+        Changed(nameof(CanEditItemStar));
         RefreshCommand.Refresh();
         GrantCommand.Refresh();
         ApplyStarCommand.Refresh();
+        ApplyItemStarCommand.Refresh();
     }
 }

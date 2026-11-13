@@ -4,6 +4,26 @@
   <StackPanel Margin="0,0,0,24">
     <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Style="{StaticResource MutedText}"
                Margin="0,0,0,10" AutomationProperties.AutomationId="Cards.Status" AutomationProperties.LiveSetting="Polite"/>
+    <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="9" Margin="0,0,0,10" Padding="10">
+      <DockPanel LastChildFill="True">
+        <WrapPanel DockPanel.Dock="Right" VerticalAlignment="Center" Margin="8,0,0,0">
+          <Border Background="{DynamicResource ControlBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                  CornerRadius="6" Margin="0,0,6,0" Width="64">
+            <TextBox Text="{Binding ItemStarText,UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEditItemStar}"
+                     ToolTip="输入 0 至 999 的整数" AutomationProperties.Name="共享物品星级" AutomationProperties.AutomationId="Cards.ItemStarInput">
+              <TextBox.InputBindings><KeyBinding Key="Enter" Command="{Binding ApplyItemStarCommand}"/></TextBox.InputBindings>
+            </TextBox>
+          </Border>
+          <Button Content="应用" Command="{Binding ApplyItemStarCommand}" Style="{StaticResource PrimaryButton}"
+                  AutomationProperties.Name="应用共享物品星级" AutomationProperties.AutomationId="Cards.ApplyItemStar"/>
+        </WrapPanel>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="共享物品★" FontWeight="Medium"/>
+          <TextBlock Text="{Binding ItemStarLabel}" TextWrapping="Wrap" Style="{StaticResource MutedText}"
+                     AutomationProperties.AutomationId="Cards.ItemStarValue"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
     <Grid Margin="0,0,0,8" IsEnabled="{Binding CanBrowse}">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>

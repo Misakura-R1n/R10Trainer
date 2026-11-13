@@ -49,10 +49,10 @@ public sealed class MainViewModel : ObservableObject
     public bool ShowError { get => _showError; private set => Set(ref _showError, value); }
     public bool CompactNavigation { get => _compactNavigation; set => Set(ref _compactNavigation, value); }
     public event Action? NavigationChanged;
-    public MainViewModel(ITrainerRuntime runtime, Func<decimal, Task<bool>> confirmStar, GameSetupViewModel gameSetup, Func<string, Task<bool>> confirmCardStar)
+    public MainViewModel(ITrainerRuntime runtime, Func<decimal, Task<bool>> confirmStar, GameSetupViewModel gameSetup, Func<string, string, Task<bool>> confirmCardEdit)
     {
         _runtime = runtime; GameSetup = gameSetup;
-        Cards = new CardManagementViewModel(runtime, confirmCardStar);
+        Cards = new CardManagementViewModel(runtime, confirmCardEdit);
         Features = FeatureCatalog.All.ToDictionary(x => x.Id, x => new FeatureViewModel(x, runtime, SetFooter, confirmStar));
         FeatureGroupViewModel Group(FeatureGroup group, string name, string glyph) => new(name, glyph, Features.Values.Where(x => x.Definition.Group == group).ToArray());
         Battle = Group(FeatureGroup.Battle, "战斗", "\uE945"); Strategy = Group(FeatureGroup.Strategy, "战略", "\uE7C1");

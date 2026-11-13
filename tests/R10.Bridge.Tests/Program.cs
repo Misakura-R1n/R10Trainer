@@ -96,6 +96,25 @@ await Test("card command carries session, generation, context and the exact card
     Check((await Error(() => client.SubmitCardForSessionAsync("42:123", 3, 5, request with { Star = -1 }))).Code == "invalid_card_request");
     Check(transport.Requests.Count == 1);
 });
+await Test("shared item star binds the card context and reads base and effective values", async () =>
+{
+    var transport = new FixtureTransport(request => request.GetProperty("op").GetString() == "card"
+        ? Ok(new { id = 7, state = "queued" })
+        : Ok(new { id = 7, state = "applied", itemStar = 40, effectiveItemStar = 80 }), "42:123");
+    var client = new BridgeClient(42, transport);
+    var request = new CardRequest(CardOperation.SetItemStar, 0, Star: 40);
+    await client.SubmitCardForSessionAsync("42:123", 3, 5, request);
+    var sent = transport.Requests.Single();
+    Check(sent.GetProperty("action").GetInt32() == 24 && sent.GetProperty("generation").GetInt32() == 3 &&
+        sent.GetProperty("context").GetInt32() == 5 && sent.GetProperty("argument2").GetInt32() == 40 &&
+        sent.GetProperty("key").GetString() == "");
+    foreach (var invalid in new[] { request with { Index = 2 }, request with { Star = 1000 }, request with { Key = "41.41" } })
+        Check((await Error(() => client.SubmitCardForSessionAsync("42:123", 3, 5, invalid))).Code == "invalid_card_request");
+    var item = (await client.GetCommandResultAsync(7)).Cards!;
+    Check(item.ItemStar == new ItemStarLevel(40, 80) && item.Rows.Count == 0 && transport.Requests.Count == 2);
+    var malformed = new BridgeClient(42, new FixtureTransport(_ => Ok(new { id = 7, state = "applied", itemStar = 40, effectiveItemStar = 81 })));
+    Check((await Error(() => malformed.GetCommandResultAsync(7))).Code == "invalid_response");
+});
 await Test("card readback decodes CP936 and rejects malformed or noncontiguous rows", async () =>
 {
     object Row(int index, string idHex) => new { index, flags = 7, idHex, characterHex = "C0BCCBB9" };

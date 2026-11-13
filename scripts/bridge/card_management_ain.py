@@ -2,6 +2,11 @@
 import struct
 
 PAGE, INSPECT, GRANT, SET_STAR = range(10, 14)
+SET_ITEM_STAR = 24
+ITEM_STAR_CAPABILITY = 16384
+CLAIM_ITEM_STAR, COMPLETE_ITEM_STAR = 16, 17
+COMMON_PARAMS, PARTY = 0x100, 0x104
+GET_ITEM_STAR, GET_EFFECTIVE_ITEM_STAR, ADD_ITEM_STAR = 0x66AE, 0x66B1, 0x66C9
 PAGE_SIZE, ROW_LIMIT = 32, 4096
 CARD_STRINGS = {
     "CP936": ("卡牌数据", "Id", "识别名", "種別", "测试角色", "测试物品"),
@@ -61,7 +66,10 @@ def install_card_resume_pump(add_function, section, functions, card_pump, requir
         blocked.append(intern(functions[caller]["name"]))
         blocked.append(intern(f"R10Bridge_CardScene{scene}".encode("ascii")))
 
+    card_call = 0
+
     def pump(asm):
+        nonlocal card_call
         index, frame = 0, 1
 
         def check_resume(verified):
@@ -91,12 +99,49 @@ def install_card_resume_pump(add_function, section, functions, card_pump, requir
         asm.local(index); asm.emit("PUSH", 1); asm.emit("ADD"); asm.emit("ASSIGN"); asm.emit("POP")
         asm.emit("JUMP", "next")
         asm.label("safe"); check_resume(1); asm.emit("POP")
-        asm.label("cards"); asm.emit("CALLFUNC", card_pump); asm.emit("RETURN")
+        asm.label("cards")
+        card_call = asm.labels["cards"]
+        asm.emit("CALLFUNC", card_pump); asm.emit("RETURN")
 
     new_section = section[:4] + struct.pack("<i", count + len(appended)) + section[8:]
     new_section += b"".join(value + b"\0" for value in appended)
     function = add_function(name, 0, [], pump, local_types=[("index", 10), ("frame", 12)])
-    return function, new_section
+    return function, new_section, card_call
+
+
+def install_item_star(add_function, card_pump, functions, require):
+    for index, name, arguments in ((GET_ITEM_STAR, b"PlayerCommonParam@ItemStar::get", 0),
+                                   (GET_EFFECTIVE_ITEM_STAR, b"PlayerCommonParam@GetAlteredItemStar", 0),
+                                   (ADD_ITEM_STAR, b"PlayerCommonParamEvent::AddItemStar", 2)):
+        function = functions[index]
+        require(function["name"] == name and function["args"] == arguments, "Unexpected item star function signature")
+
+    def pump(asm):
+        def card_edit(op, a=0, b=0):
+            for value in (op, a, b):
+                if callable(value):
+                    value()
+                else:
+                    asm.emit("PUSH", value)
+            asm.emit("CALLHLL", 36, 6, -1)
+
+        asm.emit("CALLFUNC", card_pump)  # Refreshes the scene guard before either kind of request.
+        asm.emit("PUSHLOCALPAGE"); asm.emit("PUSH", 0); card_edit(CLAIM_ITEM_STAR)
+        asm.emit("ASSIGN"); asm.emit("POP")
+        asm.local(0); asm.emit("IFZ", "return")
+        for index in (COMMON_PARAMS, PARTY):
+            asm.global_ref(index); asm.emit("PUSH", -1); asm.emit("EQUALE"); asm.emit("IFNZ", "reject")
+        asm.local(0); asm.emit("PUSH", SET_ITEM_STAR); asm.emit("EQUALE"); asm.emit("IFZ", "read")
+        card_edit(3); asm.global_get(COMMON_PARAMS, GET_ITEM_STAR); asm.emit("SUB")
+        asm.emit("PUSH", 0); asm.emit("CALLFUNC", ADD_ITEM_STAR)  # Signed delta, no reward dialog. Recalculates party stats.
+        asm.label("read")
+        card_edit(COMPLETE_ITEM_STAR, lambda: asm.global_get(COMMON_PARAMS, GET_ITEM_STAR),
+                  lambda: asm.global_get(COMMON_PARAMS, GET_EFFECTIVE_ITEM_STAR))
+        asm.emit("POP"); asm.emit("RETURN")
+        asm.label("reject"); card_edit(COMPLETE_ITEM_STAR, -1, -1); asm.emit("POP")
+        asm.label("return"); asm.emit("RETURN")
+
+    return add_function("R10Bridge_ItemStar", 0, [], pump, local_types=[("kind", 10)])
 
 
 def install_card_management(add_function, section, encoding):

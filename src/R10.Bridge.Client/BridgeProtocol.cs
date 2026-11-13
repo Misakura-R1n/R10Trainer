@@ -48,6 +48,7 @@ public sealed record BridgeState(int Pid, long GameThreadId, long Heartbeat, lon
     public bool CardManagementAvailable => (Capabilities.GetValueOrDefault() & 512) != 0;
     public int CardContext { get; init; }
     public bool CardBatchReadAvailable { get; init; }
+    public bool ItemStarAvailable { get; init; }
     public bool FoodRedraw { get; init; }
     public bool AutoRedistribute { get; init; }
     public const int ExtraTreasurePickCapability = 8192;
@@ -70,7 +71,7 @@ public sealed record BridgeCommand(long Id, string State, string? Error = null)
     public CardReply? Cards { get; init; }
 }
 
-public enum CardOperation { Page = 10, Inspect, Grant, SetStar, CatalogPage = 21, OwnershipPage }
+public enum CardOperation { Page = 10, Inspect, Grant, SetStar, CatalogPage = 21, OwnershipPage, ReadItemStar, SetItemStar }
 
 public sealed record CardEntry(int Index, string Id, string CharacterId, int Flags, string Key)
 {
@@ -86,16 +87,20 @@ public sealed record CardRequest(CardOperation Operation, int Index, string Key 
     public const int CatalogPageSize = 3 * PageSize;
     public const int OwnershipPageSize = 8 * PageSize;
     public const int RowLimit = 4096;
+    public const int MaximumItemStar = 999;
     public bool IsPage => Operation is CardOperation.Page or CardOperation.CatalogPage or CardOperation.OwnershipPage;
-    public bool Writes => Operation is CardOperation.Grant or CardOperation.SetStar;
+    public bool IsItemStar => Operation is CardOperation.ReadItemStar or CardOperation.SetItemStar;
+    public bool Writes => Operation is CardOperation.Grant or CardOperation.SetStar or CardOperation.SetItemStar;
 }
 
 public sealed record CardOwnershipPage(int Start, string Flags);
+public sealed record ItemStarLevel(int Base, int Effective);
 
 public sealed record CardReply(int Total, IReadOnlyList<CardEntry> Rows, int? Star = null,
     int Experience = 0, int NextExperience = 0, int MaxStar = 0)
 {
     public CardOwnershipPage? Ownership { get; init; }
+    public ItemStarLevel? ItemStar { get; init; }
 }
 
 public interface IBridgeClient

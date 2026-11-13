@@ -9,6 +9,8 @@
 #define BATTLE_CAPABILITY 1024
 #define CARD_CP932 2048
 #define EXTRA_TREASURE_PICK_CAPABILITY 8192
+#define ITEM_STAR_CAPABILITY 16384
+#define MAX_ITEM_STAR 999
 #define EXTRA_TREASURE_PICK 20
 #define CARD_PAGE_SIZE 32
 #define CARD_CATALOG_SIZE (3*CARD_PAGE_SIZE)
@@ -35,8 +37,8 @@ static struct {
 static void resetRewardSelection(void) {
     reward.ordinal=reward.width=reward.invalid=reward.count=reward.totalWeight=0;
 }
-enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR, CARD_CATALOG=21, CARD_OWNERSHIP };
-enum { CARD_SCENE_SCOPE=12, CARD_SCENE_READY=13, CARD_RESUME_CHECK=14, CARD_READY=15 };
+enum { CARD_PAGE=10, CARD_INSPECT, CARD_GRANT, CARD_SET_STAR, CARD_CATALOG=21, CARD_OWNERSHIP, CARD_ITEM_STAR, CARD_SET_ITEM_STAR };
+enum { CARD_SCENE_SCOPE=12, CARD_SCENE_READY=13, CARD_RESUME_CHECK=14, CARD_READY=15, CLAIM_ITEM_STAR, COMPLETE_ITEM_STAR };
 enum { BATTLE_HP=14, BATTLE_AP_FULL, BATTLE_UNLIMITED_SKILLS, BATTLE_IMMUNITY, BATTLE_REPEAT, BATTLE_UNLIMITED_ACTIONS };
 enum { BATTLE_FLAG, BATTLE_ENTER, BATTLE_LEAVE, BATTLE_AP, BATTLE_CLAIM_HP, BATTLE_HP_VALUE,
        BATTLE_FINISH_HP, BATTLE_TARGET_CHANGED, BATTLE_REFRESH_SELECTOR, BATTLE_RESUME };
@@ -48,6 +50,7 @@ typedef struct {
 } CardRow;
 typedef struct {
     LONG total, count, partStart, star, exp, nextExp, maxStar;
+    LONG effectiveItemStar;
     int invalid;
     char expected[CARD_KEY_SIZE];
     CardRow rows[CARD_CATALOG_SIZE];
@@ -92,13 +95,15 @@ static int equal(const char *a, const char *b) {
 }
 static int bulkCardRead(LONG kind) { return kind==CARD_CATALOG || kind==CARD_OWNERSHIP; }
 static int cardPage(LONG kind) { return kind==CARD_PAGE || bulkCardRead(kind); }
-static int cardCommand(LONG kind) { return (kind>=CARD_PAGE && kind<=CARD_SET_STAR) || bulkCardRead(kind); }
+static int itemStarCommand(LONG kind) { return kind==CARD_ITEM_STAR || kind==CARD_SET_ITEM_STAR; }
+static int cardCommand(LONG kind) { return (kind>=CARD_PAGE && kind<=CARD_SET_STAR) || bulkCardRead(kind) || itemStarCommand(kind); }
 static LONG cardLimit(LONG kind) {
     return kind==CARD_CATALOG ? CARD_CATALOG_SIZE : kind==CARD_OWNERSHIP ? CARD_OWNERSHIP_SIZE : CARD_PAGE_SIZE;
 }
 static int battleToggle(LONG kind) { return kind>=BATTLE_AP_FULL && kind<=BATTLE_UNLIMITED_ACTIONS; }
 static LONG capability(LONG kind) {
     if (kind==EXTRA_TREASURE_PICK) return EXTRA_TREASURE_PICK_CAPABILITY;
+    if (itemStarCommand(kind)) return ITEM_STAR_CAPABILITY;
     return cardCommand(kind) ? CARD_CAPABILITY : kind==BATTLE_HP || battleToggle(kind) ? BATTLE_CAPABILITY :
         kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : kind==8 || kind==9 ? 256 : 16;
 }
@@ -132,6 +137,10 @@ static char *hexBytes(char *p,const unsigned char *bytes,unsigned length) {
     return p;
 }
 static char *cardPayload(char *p,const Command *command,const CardResult *result,int japanese) {
+    if (itemStarCommand(command->kind)) {
+        p=field(p,",\"itemStar\":",result->star);
+        return field(p,",\"effectiveItemStar\":",result->effectiveItemStar);
+    }
     if (command->kind==CARD_OWNERSHIP) {
         p=field(p,",\"cardTotal\":",result->total);
         p=field(p,",\"cardStart\":",command->argument);
@@ -220,8 +229,10 @@ static void respond(const char *input, char *out) {
     if (cardRequest || hpRequest || equal(r.op,"set_feature") || equal(r.op,"action") || equal(r.op,"set_value")) {
         LONG kind=hpRequest ? BATTLE_HP : equal(r.op,"set_value") ? 8 : cardRequest || equal(r.op,"action") ? r.action : featureCommand(r.feature);
         if (cardRequest && (!cardCommand(kind) || r.present!=(1|8|32|64|128|512|1024) ||
-            !r.context || r.argument>=CARD_ROW_LIMIT || (kind!=CARD_SET_STAR && r.argument2!=0) ||
-            (cardPage(kind) ? r.key[0]!=0 : r.key[0]==0))) { errorResponse(out,"invalid_card_request"); return; }
+            !r.context || r.argument>=CARD_ROW_LIMIT ||
+            (itemStarCommand(kind) && (r.argument || r.argument2>MAX_ITEM_STAR)) ||
+            (kind!=CARD_SET_STAR && kind!=CARD_SET_ITEM_STAR && r.argument2!=0) ||
+            (cardPage(kind) || itemStarCommand(kind) ? r.key[0]!=0 : r.key[0]==0))) { errorResponse(out,"invalid_card_request"); return; }
         if (equal(r.op,"set_feature") && (r.present != 15 || !kind)) { errorResponse(out,"unsupported_feature"); return; }
         if (hpRequest) {
             if (r.present!=(1|8|64|256|512) || !r.context || r.argument>1 || !r.value) { errorResponse(out,"invalid_battle_hp"); return; }
@@ -300,6 +311,7 @@ static void respond(const char *input, char *out) {
     p=put(p,snapshot.dataReady ? ",\"dataReady\":true" : ",\"dataReady\":false");
     p=field(p,",\"cardContext\":",snapshot.cardReady ? snapshot.cardContext : 0);
     p=put(p,snapshot.capabilities & CARD_CAPABILITY ? ",\"cardBatchReadAvailable\":true" : ",\"cardBatchReadAvailable\":false");
+    p=put(p,snapshot.capabilities & ITEM_STAR_CAPABILITY ? ",\"itemStarAvailable\":true" : ",\"itemStarAvailable\":false");
     p=field(p,",\"food\":",snapshot.food); p=field(p,",\"medal\":",snapshot.medal);
     p=field(p,",\"friendship\":",snapshot.friendship); p=field(p,",\"unit\":",snapshot.unit);
     p=field(p,",\"filteredCards\":",snapshot.filteredCards); p=field(p,",\"fallbackCards\":",snapshot.fallbackCards);
@@ -662,7 +674,8 @@ int __cdecl CardEdit(int op,int a,int b) {
     } else if (c && cardCommand(c->kind) && c->generation==state.generation) {
         CardResult *result=&cardResults[c->id % HISTORY];
         int bulk=bulkCardRead(c->kind);
-        if (op==1 && c->state==1) {
+        int itemStar=itemStarCommand(c->kind);
+        if (op==(itemStar ? CLAIM_ITEM_STAR : 1) && c->state==1) {
             if (!available || !state.cardReady || c->context!=state.cardContext || GetTickCount()-c->submitted>3000) {
                 c->state=3; state.lastCommandState=3; state.pendingId=0;
             } else {
@@ -670,6 +683,15 @@ int __cdecl CardEdit(int op,int a,int b) {
                 c->state=EXECUTING;
                 // Reuse the script's bounded 32-row page in each game update.
                 reply=bulk ? CARD_PAGE : c->kind;
+            }
+        } else if (itemStar && c->state==EXECUTING) {
+            if (op==3) reply=c->argument2;
+            else if (op==COMPLETE_ITEM_STAR) {
+                int valid=a>=0 && (b==a || (a<=2147483647/2 && b==a*2)) &&
+                    (c->kind!=CARD_SET_ITEM_STAR || a==c->argument2);
+                result->star=a; result->effectiveItemStar=b;
+                c->state=valid && available && state.cardReady && c->context==state.cardContext ? 2 : 3;
+                state.lastCommandState=c->state; state.pendingId=0;
             }
         } else if (c->state==EXECUTING) {
             CardRow *row=result->count && c->kind!=CARD_OWNERSHIP ? &result->rows[result->count-1] : NULL;

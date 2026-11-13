@@ -108,6 +108,8 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
                 throw new BridgeException("card_context_changed", "游戏会话、读档或场景已变化，请刷新卡片列表。");
             if (request.Operation is CardOperation.CatalogPage or CardOperation.OwnershipPage && !state.CardBatchReadAvailable)
                 throw new BridgeException("card_batch_unavailable", "游戏组件尚未提供批量卡表读取。");
+            if (request.IsItemStar && !state.ItemStarAvailable)
+                throw new BridgeException("item_star_unavailable", "请安装支持物品★的游戏组件。");
             var command = await _client.SubmitCardForSessionAsync(expected.Epoch.Session, expected.Epoch.Generation,
                 expected.Context, request).ConfigureAwait(false);
             command = await AwaitCommandAsync(expected.Epoch.Session, command).ConfigureAwait(false);
@@ -131,6 +133,8 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
     }
     private static bool MatchesCardReply(CardRequest request, CardReply cards)
     {
+        if (request.IsItemStar)
+            return cards.ItemStar is { } level && (request.Operation != CardOperation.SetItemStar || level.Base == request.Star);
         if (request.Operation == CardOperation.OwnershipPage)
             return cards.Ownership?.Start == request.Index;
         if (cards.Rows.Count == 0 || cards.Rows[0].Index != request.Index) return false;
@@ -326,6 +330,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
                 LoadEpoch=ReadEpoch(state), Battle=battle,
                 CardManagementAvailable = state.CardManagementAvailable,
                 CardBatchReadAvailable = state.CardManagementAvailable && state.CardBatchReadAvailable,
+                ItemStarAvailable = state.CardManagementAvailable && state.ItemStarAvailable,
                 CardContext = state.CardManagementAvailable && state.Phase == 1 && state.GameThreadResponsive == true ? state.CardContext : 0
             });
     }

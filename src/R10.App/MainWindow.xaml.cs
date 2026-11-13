@@ -30,7 +30,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _gameSetup = new GameSetupViewModel(runtime as UnifiedTrainerRuntime,
             demo ? null : new BridgeInstaller(AppContext.BaseDirectory), settings, demo, ChooseGame);
-        _viewModel = new MainViewModel(runtime, ConfirmStarAsync, _gameSetup, text => ConfirmAsync("修改角色★等级", text));
+        _viewModel = new MainViewModel(runtime, ConfirmStarAsync, _gameSetup, ConfirmAsync);
         DataContext = _viewModel;
         Title = demo ? "R10 修改器 · 演示" : "R10 修改器";
         foreach (var (key, group) in new[] { ("battle", _viewModel.Battle), ("strategy", _viewModel.Strategy), ("resources", _viewModel.Resources), ("growth", _viewModel.Growth) })

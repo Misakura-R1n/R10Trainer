@@ -66,6 +66,7 @@ public sealed record TrainerSnapshot(ConnectionState Connection, string Status, 
     public GameLoadEpoch? LoadEpoch { get; init; }
     public bool CardManagementAvailable { get; init; }
     public bool CardBatchReadAvailable { get; init; }
+    public bool ItemStarAvailable { get; init; }
     public int CardContext { get; init; }
     public BattleEditContext? Battle { get; init; }
     public static TrainerSnapshot Empty { get; } = new(ConnectionState.Searching, "等待游戏连接", null, false,

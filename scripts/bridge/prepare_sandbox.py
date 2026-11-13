@@ -117,7 +117,8 @@ def prepare(source: Path, target: Path, save_root: Path, game_name: str,
     save_hashes = hashes(save_source)
     manifest = json.loads((bridge_directory / "bridge-build.json").read_text(encoding="utf-8-sig"))
     bridge_ain = bridge_directory / "Rance10.ain"
-    supported_profiles = {"full": {15, 47, 239, 495, 1007, 2031, 10223}, "controls": {31, 63, 255, 511, 1023, 2047, 10239}}
+    supported_profiles = {"full": {15, 47, 239, 495, 1007, 2031, 10223, 26607},
+                          "controls": {31, 63, 255, 511, 1023, 2047, 10239, 26623}}
     require(manifest["sourceSha256"] == CORE_SHA["Rance10.ain"] and
             manifest["capabilities"] in supported_profiles.get(manifest["profile"], ()) and
             manifest["aliceOfflineParsePassed"] is True and

@@ -287,6 +287,34 @@ internal static class Program
         Check(japaneseResult.GetProperty("cardCodePage").GetInt32()==932 &&
             japaneseResult.GetProperty("cardRows")[0].GetProperty("idHex").GetString()=="838983938358",
             "Japanese component reports CP932 and preserves card bytes");
+
+        const int readItemStar = 23, setItemStar = 24, claimItemStar = 16, completeItemStar = 17;
+        string ItemStar(int action, int value = 0) => Submit(action, Context(), star:value, loadGeneration:generation+1);
+        Check(Request(ItemStar(readItemStar)).GetProperty("error").GetString()=="script_hook_unavailable",
+            "the existing card component does not advertise item star");
+        tick(0,1,1007|16384); tick(1,16,16); edit(ready,1,0);
+        Check(Request("{\"op\":\"get_state\"}").GetProperty("itemStarAvailable").GetBoolean(), "item star capability is advertised");
+        Check(Request(ItemStar(setItemStar,1000)).GetProperty("error").GetString()=="invalid_card_request",
+            "item star rejects an out-of-range target");
+        int itemRead = Request(ItemStar(readItemStar)).GetProperty("id").GetInt32();
+        Check(edit(1,0,0)==0 && edit(claimItemStar,0,0)==readItemStar && edit(claimItemStar,0,0)==0,
+            "the card row pump leaves the item star request for its own game-thread claim");
+        edit(completeItemStar,1200,2400);
+        var item = Result(itemRead);
+        Check(item.GetProperty("itemStar").GetInt32()==1200 && item.GetProperty("effectiveItemStar").GetInt32()==2400 &&
+            !item.TryGetProperty("cardRows",out _), "item star reads native save values above the editor input limit");
+        int wrongItem = Request(ItemStar(setItemStar,47)).GetProperty("id").GetInt32();
+        Check(edit(claimItemStar,0,0)==setItemStar && edit(3,0,0)==47, "the shared item star mutation claims the exact value");
+        edit(completeItemStar,48,96);
+        Check(Result(wrongItem).GetProperty("state").GetString()=="rejected", "a mismatched item star readback is rejected");
+        int correctItem = Request(ItemStar(setItemStar,0)).GetProperty("id").GetInt32();
+        edit(claimItemStar,0,0); edit(completeItemStar,0,0);
+        Check(Result(correctItem).GetProperty("itemStar").GetInt32()==0, "zero is a valid item star target");
+        int staleItem = Request(ItemStar(setItemStar,20)).GetProperty("id").GetInt32();
+        edit(scene,1,0);
+        Check(edit(claimItemStar,0,0)==0 && Result(staleItem).GetProperty("state").GetString()=="rejected",
+            "the item star setter cannot run after entering a protected scene");
+        edit(scene,-1,0); edit(ready,1,0);
     }
 
     private static void TestBattleFeatures(Call battle)
@@ -398,6 +426,15 @@ internal static class Program
         edit(ready,1,0);
         Check(Context() > beforeOrdinaryLoad && edit(verifyResume,0,0) == 0,
             "a successful ordinary load ends previous Resume verification");
+
+        tick(0,1,10223|16384); tick(1,16,16); edit(ready,1,0);
+        int oldItem = Request(JsonSerializer.Serialize(new { op = "card", action = 24, argument = 0,
+            argument2 = 20, generation = State().GetProperty("loadGeneration").GetInt32(), context = Context(), key = "" }))
+            .GetProperty("id").GetInt32();
+        tick(2,1,0); tick(1,16,16);
+        Check(edit(16,0,0)==0 && Request(JsonSerializer.Serialize(new { op = "get_command_result", id = oldItem }))
+            .GetProperty("state").GetString()=="rejected", "loading cancels an item star mutation before it can reach the new save");
+        tick(3,1,0);
     }
 
     private static void TestResumeBattleFeatures(Call battle)

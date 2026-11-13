@@ -8,6 +8,8 @@ import zlib
 
 import build_instrumented_ain as builder
 from battle_ain import AP_FULL, REPEAT_ACTIONS, STATUS_IMMUNITY, UNLIMITED_ACTIONS, UNLIMITED_SKILLS
+from card_management_ain import (ADD_ITEM_STAR, CLAIM_ITEM_STAR, COMMON_PARAMS, COMPLETE_ITEM_STAR,
+                                 GET_EFFECTIVE_ITEM_STAR, GET_ITEM_STAR, ITEM_STAR_CAPABILITY, PARTY, SET_ITEM_STAR)
 
 SOURCE: Path
 
@@ -71,6 +73,9 @@ class WrapperVm:
             elif op == 4: stack.append("global")
             elif op == 5: stack.append("local")
             elif op == 9: stack.append(stack.pop() + stack.pop())
+            elif op == 0x0A:
+                right, left = stack.pop(), stack.pop()
+                stack.append(left - right)
             elif op == 0x0E: stack.append(stack.pop() & stack.pop())
             elif op == 0x13:
                 right, left = stack.pop(), stack.pop()
@@ -140,6 +145,9 @@ class WrapperVm:
                     skill, party = stack.pop(), stack.pop()
                     self.events.append(("usable", party, skill)); stack.append(int(self.usable))
                 elif target == 0x15D8: self.events.append(("cleanup",))
+                elif target == ADD_ITEM_STAR:
+                    show_dialog, delta = stack.pop(), stack.pop()
+                    self.add_item_star(delta, show_dialog)
                 else:
                     child = self.functions[target]
                     count = len(child["arguments"])
@@ -183,10 +191,42 @@ class CardResumeVm(WrapperVm):
         return 0
 
     def run(self, function, arguments, this, stack_values=()):
-        if function["name"] == "R10Bridge_CardManagement":
+        if function["name"] == "R10Bridge_ItemStar":
             self.events.append(("cards",))
             return None
         return super().run(function, arguments, this, stack_values)
+
+
+class ItemStarVm(WrapperVm):
+    def __init__(self, generated, report):
+        super().__init__(generated, report)
+        self.globals[COMMON_PARAMS] = 700
+        self.star, self.multiplier, self.operation, self.target = 32, 2, 0, 0
+
+    def run(self, function, arguments, this, stack_values=()):
+        if function["name"] == "R10Bridge_CardManagement":
+            self.events.append(("card_readiness",))
+            return None
+        return super().run(function, arguments, this, stack_values)
+
+    def method(self, obj, function, args):
+        assert obj == 700 and not args
+        if function == GET_ITEM_STAR: return self.star
+        assert function == GET_EFFECTIVE_ITEM_STAR
+        return self.star * self.multiplier
+
+    def add_item_star(self, delta, show_dialog):
+        self.events.append(("game_add", delta, show_dialog))
+        self.star += delta
+
+    def card_edit(self, op, a, b):
+        if op == CLAIM_ITEM_STAR:
+            self.events.append(("claim",))
+            return self.operation
+        if op == 3: return self.target
+        assert op == COMPLETE_ITEM_STAR
+        self.events.append(("complete", a, b))
+        return 0
 
 
 class ControlVm(WrapperVm):
@@ -439,17 +479,20 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(vm.events, [("tick", 4, 2, 0)])
 
     def test_startup_capabilities_match_full_profile(self):
-        self.assertEqual(self.report["capabilities"], 10223)
+        expected = 10223 | ITEM_STAR_CAPABILITY
+        self.assertEqual(self.report["capabilities"], expected)
         startup = next(h for h in self.report["hooks"] if h["id"] == 0x47DD)
         prefix = bytes.fromhex(startup["prefixHex"])
-        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", 10223))
+        self.assertEqual(prefix[6:24], builder.instruction("PUSH", 0) + builder.instruction("PUSH", 1) + builder.instruction("PUSH", expected))
 
     def test_card_management_uses_typed_locals_and_integer_native_abi(self):
         pump = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardManagement")
         resume = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_CardResumePump")
+        item_star = next(f for f in self.report["addedFunctions"] if f["name"] == "R10Bridge_ItemStar")
         update = next(hook for hook in self.report["hooks"] if hook["id"] == 0x2064)
         self.assertEqual(update["cardManagement"], resume["id"])
-        self.assertIn(builder.instruction("CALLFUNC", pump["id"]), bytes.fromhex(resume["bytes"]))
+        self.assertIn(builder.instruction("CALLFUNC", item_star["id"]), bytes.fromhex(resume["bytes"]))
+        self.assertIn(builder.instruction("CALLFUNC", pump["id"]), bytes.fromhex(item_star["bytes"]))
         plain = zlib.decompress(self.generated[16:])
         func_start = 16 + self.report["newCodeLength"]
         function_bytes = sum(len(builder.new_function_record(f["entry"], f["name"], f["returnType"],
@@ -465,6 +508,27 @@ class FullBuildTests(unittest.TestCase):
         export = next(e for e in exports if e["name"] == b"CardEdit")
         self.assertEqual(export, {"name": b"CardEdit", "returnType": 10,
                                  "arguments": [(b"op", 10), (b"a", 10), (b"b", 10)]})
+
+    def test_shared_item_star_uses_the_game_upgrade_and_reads_base_and_effective_values(self):
+        vm = ItemStarVm(self.generated, self.report)
+        entry = "R10Bridge_ItemStar"
+        vm.invoke(entry)
+        self.assertEqual(vm.events, [("card_readiness",), ("claim",)])
+        vm.events.clear(); vm.operation = SET_ITEM_STAR; vm.target = 80
+        vm.invoke(entry)
+        self.assertEqual(vm.events, [("card_readiness",), ("claim",), ("game_add", 48, 0), ("complete", 80, 160)])
+        vm.events.clear(); vm.target = 0
+        vm.invoke(entry)
+        self.assertEqual(vm.events[-2:], [("game_add", -80, 0), ("complete", 0, 0)])
+        vm.events.clear(); vm.operation = SET_ITEM_STAR - 1
+        vm.invoke(entry)
+        self.assertEqual(vm.events, [("card_readiness",), ("claim",), ("complete", 0, 0)])
+        for missing in (COMMON_PARAMS, PARTY):
+            vm.events.clear(); vm.operation = SET_ITEM_STAR
+            previous = vm.globals[missing]; vm.globals[missing] = -1
+            vm.invoke(entry)
+            self.assertEqual(vm.events, [("card_readiness",), ("claim",), ("complete", -1, -1)])
+            vm.globals[missing] = previous
 
     def test_card_readiness_tracks_the_scene_calls(self):
         vm = self.vm()

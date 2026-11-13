@@ -4,8 +4,10 @@
 
 | 项目 | 位置 |
 |---|---|
-| 源码 | v0.9.4，默认分支 `codex/initial-import` |
-| 本地玩家包 | `artifacts/R10Trainer-v0.9.4-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json` |
+| 源码 | 默认分支 `codex/initial-import`，含尚未发布的共享物品★ |
+| v0.9.4 发布包 | `artifacts/R10Trainer-v0.9.4-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json` |
+| 共享物品★本地构建 | `artifacts/live/item-star/app/R10Trainer.exe`，同目录包含八版 `full` 组件配方。 |
+| 共享物品★实机副本 | `artifacts/item-star-game`。游戏已退出，隔离存档路径见 `artifacts/live/item-star/bridge-sandbox.json`。 |
 | 多版本构建输入 | `artifacts/patch-compatibility-inputs/<版本 ID>/Rance10.ain`。`bugfix` 和 `japanese-original` 目录含各自的 EXE 与 INI |
 | 中文 BugFix 实机清单 | `artifacts/live/drop-dedup/identity.json` 记录隔离存档、组件指纹及源文件校验结果。 |
 
@@ -15,6 +17,7 @@
 
 | 范围 | 本地证据 |
 |---|---|
+| 共享物品★ | `artifacts/live/item-star/verification.json` 记录中文 BugFix 隔离实机。设为 ★40 后，魔剑 卡奥斯的 HP / AT 从 0 / 300 变为 1,350 / 4,050，队伍综合 HP / AT 从 2,250 / 2,525 变为 4,950 / 7,625。原档仍为 ★0，新档重载为 ★40，关闭修改器后回读一致。`artifacts/bridge/item-star-build.log` 记录模拟回归、172 项 x86 辅助进程检查及八版离线安装还原。符号链接用例因 Windows 权限不足跳过。 |
 | 中文 BugFix 卡表读取 | `artifacts/live/optimization/cards.json`。同一隔离存档各测 5 次，1,134 张卡的完整读取从 36 次请求降至 12 次，中位耗时从 1.69 秒降至 0.57 秒。持有状态刷新用 5 次请求，中位耗时 0.52 秒。卡片资料和持有状态回读一致。`identity.json` 记录组件还原和源文件校验。 |
 | 配方导出与安装器 | `artifacts/live/optimization/bench/recipe.json` 记录八版配方导出从 42.30 秒降至 11.80 秒，输出 SHA-256 一致。`managed.json` 记录 x86 下 BugFix AIN 应用配方的分配量中位数从 139.54 MiB 降至 105.18 MiB，编码字节一致。`artifacts/bridge/optimization-install.log` 记录八版逐字节还原和 162 项原生辅助进程检查。符号链接用例因 Windows 权限不足跳过。 |
 | 界面、数据采样和 JSONL | `artifacts/bridge/optimization-final.log`。核心 78 项、桥接 90 项通过，覆盖四国兵力块读取、跨块 UTF-8 和 32 KiB 管道响应。`optimization-mcp.log` 记录 x86 MCP 初始化和工具清单冒烟测试。 |
