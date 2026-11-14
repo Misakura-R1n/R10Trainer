@@ -76,12 +76,34 @@ class SandboxTests(unittest.TestCase):
     def test_treasure_component_profiles_are_accepted(self):
         for profile, capabilities in (("full", 59375), ("controls", 59391)):
             with self.subTest(profile=profile):
-                manifest = dict(self.manifest, profile=profile, capabilities=capabilities)
+                manifest = dict(self.manifest, profile=profile, capabilities=capabilities, dllSha256=sandbox.file_sha(self.dll))
                 (self.bridge / "bridge-build.json").write_text(json.dumps(manifest), encoding="utf-8")
                 target = self.artifacts / profile
                 result = self.prepare(target=target, game_name=f"R10Treasure{profile}")
                 self.assertEqual(Path(result["target"]), target.resolve())
+                self.assertEqual(result["bridgeDllSha256"], manifest["dllSha256"])
                 self.assertFalse(result["launched"])
+
+    def test_treasure_ain_rejects_older_dll_even_when_it_is_x86(self):
+        old_dll = self.bridge / "old-R10Bridge.dll"
+        old_dll.write_bytes(self.dll.read_bytes() + b"older bridge fixture")
+        for profile, capabilities in (("full", 59375), ("controls", 59391)):
+            manifest = dict(self.manifest, profile=profile, capabilities=capabilities, dllSha256=sandbox.file_sha(self.dll))
+            (self.bridge / "bridge-build.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with self.subTest(profile=profile), patch.object(Path, "mkdir", side_effect=AssertionError(
+                    "An incompatible DLL must be rejected before creating directories")):
+                with self.assertRaisesRegex(ValueError, "matching.*DLL"):
+                    self.prepare(bridge_dll=old_dll)
+                self.assertFalse(self.target.exists())
+                self.assertFalse((self.saves / "R10SandboxTest").exists())
+
+    def test_treasure_ain_requires_a_dll_hash_in_the_build_manifest(self):
+        manifest = dict(self.manifest, capabilities=59375)
+        (self.bridge / "bridge-build.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "matching.*DLL"):
+            self.prepare()
+        self.assertFalse(self.target.exists())
+        self.assertFalse((self.saves / "R10SandboxTest").exists())
 
     def test_existing_save_namespace_is_rejected_before_game_creation(self):
         (self.saves / "R10SandboxTest").mkdir()

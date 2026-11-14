@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -521,7 +522,10 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--alice", type=Path, default=DEFAULT_ALICE)
     parser.add_argument("--profile", choices=["heartbeat", "full", "controls"], default="heartbeat")
+    parser.add_argument("--dll-sha256", help="SHA-256 of the DLL verified by the component build")
     args = parser.parse_args()
+    if args.dll_sha256 is not None:
+        require(re.fullmatch(r"[0-9A-Fa-f]{64}", args.dll_sha256) is not None, "Invalid bridge DLL SHA-256")
     output = artifact_directory(args.output_dir)
     source = args.source.resolve()
     target = output / "Rance10.ain"
@@ -546,6 +550,8 @@ def main() -> None:
     require(source.read_bytes() == original, "Source file changed during the offline build")
     report.update({"sourcePath": str(source), "outputPath": str(target), "alicePath": str(args.alice.resolve()),
                    "aliceSha256": sha(args.alice.read_bytes()), "aliceOfflineParsePassed": True, "sourceUnchanged": True})
+    if args.dll_sha256 is not None:
+        report["dllSha256"] = args.dll_sha256.upper()
     (output / "bridge-build.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"output": str(target), "sourceVersion": report["sourceVersion"], "sha256": report["outputSha256"],
                       "codeBytesAdded": report["newCodeLength"] - report["originalCodeLength"],

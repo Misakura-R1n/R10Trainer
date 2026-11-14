@@ -282,7 +282,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             Help:FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help,ActiveDescription:"游戏线程已应用开关；固定奖励和消耗型奖励保留原规则。");
         bool extraPickReady = CanWrite(state, FeatureId.ExtraTreasurePick);
         bool treasureReady = CanWrite(state, FeatureId.Treasure);
-        features[FeatureId.Treasure] = new(Requested: state.TreasureFind, Active: state.TreasureFind && treasureReady,
+        features[FeatureId.Treasure] = new(Requested: state.TreasureFindAvailable && state.TreasureFind, Active: state.TreasureFind && treasureReady,
             CanEdit: treasureReady, Detail: treasureReady ? null : "请安装新版游戏组件并重新启动游戏。",
             Help: FeatureCatalog.Get(FeatureId.Treasure).Help, ActiveDescription: "下次计算战斗奖励时生效。");
         features[FeatureId.ExtraTreasurePick] = new(Requested: state.ExtraTreasurePick, Active: state.ExtraTreasurePick && extraPickReady,
@@ -353,7 +353,10 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
         state.BattleFeaturesAvailable && state.OrdinaryBattle && state.BattleReady && state.BattleContext > 0 &&
         ReadEpoch(state) is { Ready: true } epoch ? new(epoch, state.BattleContext) : null;
     private static bool CanWriteData(BridgeState state) => CanWrite(state,FeatureId.Resources) && state.DataReady;
-    private static bool CanWrite(BridgeState state,FeatureId id=FeatureId.Hp) => state.Phase==1 && state.ScriptVersion==1 && ComponentFeatures.TryGetValue(id,out var feature) && (state.Capabilities.GetValueOrDefault() & feature.Capability)!=0 && state.HeartbeatAgeMs is >=0 and <=2000;
+    private static bool CanWrite(BridgeState state,FeatureId id=FeatureId.Hp) =>
+        state.Phase==1 && state.ScriptVersion==1 && state.HeartbeatAgeMs is >=0 and <=2000 &&
+        ComponentFeatures.TryGetValue(id,out var feature) && (state.Capabilities.GetValueOrDefault() & feature.Capability)!=0 &&
+        (id != FeatureId.Treasure || state.TreasureFindAvailable);
     private static Dictionary<FeatureId,FeatureObservation> EmptyFeatures() => FeatureCatalog.All.ToDictionary(x=>x.Id,_=>new FeatureObservation(Detail:"此功能尚未接入桥接模式。"));
     private void PublishError(BridgeException error)
     {

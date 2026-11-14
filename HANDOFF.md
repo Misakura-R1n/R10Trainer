@@ -31,6 +31,7 @@
 | MCP 独立进程 | `artifacts/bridge/20261112-review-fixes-mcp.log`。重复键返回解析错误，后续请求正常。 |
 | v0.9.5 玩家包 | `artifacts/bridge/v0.9.5-package-build.log`、`v0.9.5-package-integrity.json`、`v0.9.5-release-check.json` |
 | AIN 离线校验 | `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/` 下的 `bridge-build.json` |
+| AIN 与 DLL 配套检查 | `artifacts/bridge/20261114-mixed-components.log` 记录桥接回归、多版本组件构建及安装还原。`20261114-mixed-components-offline.log` 验证新版 full AIN 配 v0.9.5 DLL 时，提前拒绝准备副本和导出配方，配套 DLL 可用。`20261114-mixed-components-native.log` 记录实际 DLL 的 x86 辅助进程检查，两种新旧混用均禁用宝箱发现率，配套时能开启和关闭。未启动游戏。 |
 | 普通战斗与 AP | `artifacts/live/battle-features-gameplay.jsonl`。对应场景、附加测试条件和组件身份见 `battle-features-fixture.json`、`battle-features-integrity.json`。 |
 | 地图、资源、HP 保护与宝箱 | `artifacts/live/feature-audit-gameplay.jsonl`、`feature-audit-published-map.log`、`feature-audit-published-resources.log` |
 | 宝箱发现率重算冲突修复 | `artifacts/bridge/20261114-fix-treasure-full.log`：核心 81 项、桥接 102 项、x86 辅助进程 178 项、AIN 兼容 2 项及安装恢复 33 项通过，八版逐字节恢复一致；符号链接用例因 Windows 权限不足跳过。宝箱仅由游戏线程在奖励消费点替换本次加成，Core 已无该字段的写入入口；模拟重算期间不再引发暂停，其他数据事务的冲突保护仍保留。八版 full / controls 字节码回归检查自然值、开关恢复及字段不变；既有 helper 和恢复入口保持稳定。修复后交叉审查补齐了 CODE 长度常量，实际生成组件校验通过；未确认其他新问题。新效果尚未实机验证。原故障复现保留在 Git 提交 `dc5918c` 与 `artifacts/bridge/v0.9.5-treasure-recalculation-test.log`。 |

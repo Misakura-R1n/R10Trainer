@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using R10.Bridge.Client;
+using R10.Bridge.Runtime;
+using R10.Core;
 using R10.Mcp;
 
 var passed = 0;
@@ -164,10 +166,41 @@ await Test("state carries heartbeat freshness and guard counters", async () =>
     var json = JsonNode.Parse(State())!; json["heartbeatAgeMs"] = 2001; json["blockedHits"] = 5; json["lastRequestedHp"] = 0; json["scriptVersion"] = 1; json["capabilities"] = 15;
     json["extraTreasurePick"] = true;
     json["treasureFind"] = true;
-    var state = await new BridgeClient(42, new FixtureTransport(_ => json.ToJsonString())).GetStateAsync();
+    var client = new BridgeClient(42, new FixtureTransport(_ => json.ToJsonString()));
+    var state = await client.GetStateAsync();
     Check(state.GameThreadResponsive == false && state.BlockedHits == 5 && state.LastRequestedHp == 0 && state.ScriptVersion == 1 && state.HpGuardAvailable && state.ExtraTreasurePick && state.TreasureFind);
+    Check(!state.TreasureFindAvailable);
+    json["capabilities"] = 15 | BridgeState.TreasureFindCapability;
+    json["treasureFind"] = false;
+    Check(await client.GetStateAsync() is { TreasureFindAvailable: true, TreasureFind: false });
 });
 await Test("unadvertised HP hook remains unavailable", async () => Check(!(await new BridgeClient(42, new FixtureTransport(_ => State())).GetStateAsync()).HpGuardAvailable));
+await Test("new treasure AIN paired with an old DLL leaves the toggle unavailable", async () =>
+{
+    var json = JsonNode.Parse(State())!.AsObject();
+    json["heartbeatAgeMs"] = 0;
+    json["scriptVersion"] = 1;
+    json["capabilities"] = 15 | BridgeState.TreasureFindCapability;
+    // The old DLL forwards the new AIN's capabilities, but has no treasureFind field.
+    var transport = new FixtureTransport(request => request.GetProperty("op").GetString() == "get_state"
+        ? json.ToJsonString() : throw new InvalidOperationException("Unsupported toggle reached the old DLL."));
+    var runtime = new BridgeTrainerRuntime(new BridgeClient(42, transport));
+    var observed = new TaskCompletionSource<TrainerSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+    runtime.SnapshotChanged += snapshot => observed.TrySetResult(snapshot);
+    try
+    {
+        await runtime.StartAsync();
+        var snapshot = await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(snapshot.Connection == ConnectionState.Ready && snapshot.Features[FeatureId.Hp].CanEdit);
+        Check(snapshot.Features[FeatureId.Treasure] is { CanEdit: false, Requested: false, Active: false });
+        Check(!(await runtime.SetToggleAsync(FeatureId.Treasure, true)).Success);
+        Check(!(await runtime.SetToggleAsync(FeatureId.Treasure, false)).Success);
+    }
+    finally
+    {
+        Check((await runtime.TryCloseAsync()).Success);
+    }
+});
 await Test("load failure evidence survives ready phase and negative quick-load slot", async () =>
 {
     var json = JsonNode.Parse(State())!; json["loadKind"] = 2; json["loadSlot"] = -1; json["lastCompletedGeneration"] = 2; json["lastLoadOutcome"] = 2;

@@ -11,7 +11,7 @@ static class RuntimeTests
             var client = new RuntimeFixture();
             var runtime = new BridgeTrainerRuntime(client);
             Check(!(await runtime.SetToggleAsync(FeatureId.Treasure, true)).Success && client.Writes.Count == 0);
-            client.State = client.State with { Capabilities = 15 | BridgeState.TreasureFindCapability };
+            client.State = client.State with { Capabilities = 15 | BridgeState.TreasureFindCapability, TreasureFindAvailable = true };
             Check((await runtime.SetToggleAsync(FeatureId.Treasure, true)).Success);
             Check(runtime.Current.Features[FeatureId.Treasure] is { Requested: true, Active: true, CanEdit: true });
             Check((await runtime.SetToggleAsync(FeatureId.Treasure, false)).Success && !client.State.TreasureFind);

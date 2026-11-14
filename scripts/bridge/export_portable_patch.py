@@ -20,6 +20,9 @@ def export(source: bytes, dll: bytes, built: tuple[bytes, dict] | None = None) -
         generated, report = built
     require(report['profile'] == 'full' and report['sourceSha256'] == source_hash and
             report['outputSha256'] == sha(generated), 'Generated AIN does not match its build report')
+    dll_hash = sha(dll)
+    if 'dllSha256' in report:
+        require(report['dllSha256'] == dll_hash, 'Bridge DLL does not match the generated AIN build report')
     require(len(generated) >= 16 and generated[:8] == b'AI2\0\0\0\0\0', 'Invalid generated AIN header')
     length, compressed = struct.unpack_from('<II', generated, 8)
     require(length == version['targetPlainLength'] and compressed == len(generated) - 16,
@@ -60,7 +63,7 @@ def export(source: bytes, dll: bytes, built: tuple[bytes, dict] | None = None) -
     return {'schema': 1, 'sourceSha256': version['sourceSha256'], 'sourcePlainSha256': version['sourcePlainSha256'],
             'targetPlainSha256': version['targetPlainSha256'], 'sourcePlainLength': len(original), 'targetPlainLength': len(target),
             'exeSha256': version['exeSha256'],
-            'dllSha256': sha(dll), 'edits': edits}
+            'dllSha256': dll_hash, 'edits': edits}
 
 
 def main():

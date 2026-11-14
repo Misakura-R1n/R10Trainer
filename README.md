@@ -121,7 +121,7 @@ $compatibilityAin = $versions | Where-Object id -ne 'bugfix' | ForEach-Object {
 
 ### 准备实机副本
 
-以中文 BugFix 原始文件为输入，使用 `-Controls` 的构建产物。目标游戏目录须为 `artifacts` 下的新目录，`SandboxName` 须使用新存档名。
+以中文 BugFix 原始文件为输入，使用 `-Controls` 的构建产物。带宝箱发现率能力的 AIN 和 DLL 须来自同一次组件构建，准备副本时会核对构建清单中的 DLL 哈希。目标游戏目录须为 `artifacts` 下的新目录，`SandboxName` 须使用新存档名。
 
 ```powershell
 ./scripts/prepare-bridge-sandbox.ps1 `

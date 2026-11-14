@@ -30,6 +30,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'HP component installation verification failed.' }
     if ($Bridge) {
         & "$PSScriptRoot/build-bridge.ps1" -Toolchain $BridgeToolchain
+        $fullDllSha256 = (Get-FileHash -LiteralPath artifacts/bridge-native/R10Bridge.dll -Algorithm SHA256).Hash
         & $DotNetPath publish tests/R10.NativeBridge.Tests -c $Configuration -r win-x86 --self-contained true -o artifacts/bridge-native-test --nologo
         if ($LASTEXITCODE -ne 0) { throw 'Native bridge helper publish failed.' }
         & "$repoRoot/artifacts/bridge-native-test/R10.NativeBridge.Tests.exe" "$repoRoot/artifacts/bridge-native/R10Bridge.dll"
@@ -56,7 +57,8 @@ try {
             if (-not $gameVersion -or $seen.ContainsKey($sourceHash)) { throw "Unsupported or duplicate AIN: $source" }
             $seen[$sourceHash] = $true
             $output = if ($gameVersion.id -eq 'bugfix') { 'artifacts/bridge/full' } else { "artifacts/bridge/full-compatibility/$($gameVersion.id)" }
-            $ainArguments = @('-B', 'scripts/bridge/build_instrumented_ain.py', '--source', $source, '--profile', 'full', '--output-dir', $output)
+            $ainArguments = @('-B', 'scripts/bridge/build_instrumented_ain.py', '--source', $source, '--profile', 'full',
+                '--output-dir', $output, '--dll-sha256', $fullDllSha256)
             if ($AlicePath) { $ainArguments += @('--alice', $AlicePath) }
             & $PythonPath @ainArguments
             if ($LASTEXITCODE -ne 0) { throw "AIN bridge construction failed for $($gameVersion.id)." }
@@ -72,11 +74,13 @@ try {
     }
     if ($Controls) {
         & "$PSScriptRoot/build-bridge.ps1" -Toolchain $BridgeToolchain -OutputDirectory "$repoRoot/artifacts/bridge-controls-native"
+        $controlsDllSha256 = (Get-FileHash -LiteralPath artifacts/bridge-controls-native/R10Bridge.dll -Algorithm SHA256).Hash
         & $DotNetPath publish tests/R10.NativeBridge.Tests -c $Configuration -r win-x86 --self-contained true -o artifacts/native-controls-tests --nologo
         if ($LASTEXITCODE -ne 0) { throw 'Native controls helper build failed.' }
         & "$repoRoot/artifacts/native-controls-tests/R10.NativeBridge.Tests.exe" "$repoRoot/artifacts/bridge-controls-native/R10Bridge.dll"
         if ($LASTEXITCODE -ne 0) { throw 'Native controls verification failed.' }
-        $controlArguments = @('-B', 'scripts/bridge/build_instrumented_ain.py', '--source', $SourceAin, '--profile', 'controls', '--output-dir', 'artifacts/bridge/controls')
+        $controlArguments = @('-B', 'scripts/bridge/build_instrumented_ain.py', '--source', $SourceAin, '--profile', 'controls',
+            '--output-dir', 'artifacts/bridge/controls', '--dll-sha256', $controlsDllSha256)
         if ($AlicePath) { $controlArguments += @('--alice', $AlicePath) }
         & $PythonPath @controlArguments
         if ($LASTEXITCODE -ne 0) { throw 'Controls AIN construction failed.' }

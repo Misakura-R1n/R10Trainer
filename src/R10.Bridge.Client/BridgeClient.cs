@@ -31,11 +31,14 @@ public sealed class BridgeClient : IBridgeClient
         if (pid != ProcessId) throw new BridgeException("response_pid_mismatch", "The bridge state belongs to a different process.");
         var phase = Integer(response, "phase");
         if (phase is < 0 or > 2) throw Invalid("phase");
+        long? capabilities = NullableInteger(response, "capabilities");
+        // The DLL's state field distinguishes support from an AIN bit forwarded by an older DLL.
+        bool? treasureFind = response.TryGetProperty("treasureFind", out _) ? Boolean(response, "treasureFind") : null;
         return new BridgeState(ProcessId, Integer(response, "gameThreadId"), Integer(response, "heartbeat"), Integer(response, "frame"),
             Integer(response, "loadGeneration"), (int)phase, Boolean(response, "hpGuard"), Integer(response, "lastCommandId"),
             Text(response, "lastCommandState"), NullableInteger(response, "playerHp"), NullableInteger(response, "playerHpMax"), NullableInteger(response, "enemyHp"),
             NullableInteger(response, "heartbeatAgeMs"), NullableInteger(response, "blockedHits"), NullableInteger(response, "lastRequestedHp"),
-            NullableInteger(response, "scriptVersion"), NullableInteger(response, "capabilities"),
+            NullableInteger(response, "scriptVersion"), capabilities,
             NullableNonnegativeInteger(response, "loadKind"), NullableInteger(response, "loadSlot"),
             NullableNonnegativeInteger(response, "lastCompletedGeneration"), NullableNonnegativeInteger(response, "lastLoadOutcome"))
         { ResourcesFull = response.TryGetProperty("resourcesFull", out var full) && full.ValueKind == JsonValueKind.True, DataReady = response.TryGetProperty("dataReady", out var data) && data.ValueKind == JsonValueKind.True, Food=NullableInteger(response,"food"), Medal=NullableInteger(response,"medal"), Friendship=NullableInteger(response,"friendship"), Unit=NullableInteger(response,"unit"), FoodRedraw = response.TryGetProperty("foodRedraw", out var redraw) && redraw.ValueKind == JsonValueKind.True, AutoRedistribute = response.TryGetProperty("autoRedistribute", out var redistribute) && redistribute.ValueKind == JsonValueKind.True, NoDuplicateCards = response.TryGetProperty("noDuplicateCards", out var cards) && cards.ValueKind == JsonValueKind.True, FilteredCards = NullableInteger(response,"filteredCards"), FallbackCards = NullableInteger(response,"fallbackCards"), Session = Session, BattleReady = response.TryGetProperty("battleReady", out var ready) && ready.ValueKind == JsonValueKind.True,
@@ -43,7 +46,8 @@ public sealed class BridgeClient : IBridgeClient
             CardBatchReadAvailable = response.TryGetProperty("cardBatchReadAvailable", out _) && Boolean(response, "cardBatchReadAvailable"),
             ItemStarAvailable = response.TryGetProperty("itemStarAvailable", out _) && Boolean(response, "itemStarAvailable"),
             ExtraTreasurePick = response.TryGetProperty("extraTreasurePick", out _) && Boolean(response, "extraTreasurePick"),
-            TreasureFind = response.TryGetProperty("treasureFind", out _) && Boolean(response, "treasureFind"),
+            TreasureFind = treasureFind == true,
+            TreasureFindAvailable = treasureFind.HasValue && (capabilities.GetValueOrDefault() & BridgeState.TreasureFindCapability) != 0,
             OrdinaryBattle = response.TryGetProperty("ordinaryBattle", out _) && Boolean(response, "ordinaryBattle"),
             BattleContext = response.TryGetProperty("battleContext", out _) ? BoundedInteger(response, "battleContext", int.MaxValue) : 0,
             BattleRules = response.TryGetProperty("battleRules", out _) ? (BattleRules)BoundedInteger(response, "battleRules", int.MaxValue) : BattleRules.None,

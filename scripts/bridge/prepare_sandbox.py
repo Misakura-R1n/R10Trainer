@@ -16,6 +16,8 @@ import shutil
 import struct
 import sys
 
+from feature_ain import TREASURE_FIND_CAPABILITY
+
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = ROOT / "artifacts"
 # Match the legacy package name and build.ps1's versioned player directories.
@@ -123,8 +125,9 @@ def prepare(source: Path, target: Path, save_root: Path, game_name: str,
     bridge_ain = bridge_directory / "Rance10.ain"
     supported_profiles = {"full": {15, 47, 239, 495, 1007, 2031, 10223, 26607, 59375},
                           "controls": {31, 63, 255, 511, 1023, 2047, 10239, 26623, 59391}}
+    capabilities = manifest["capabilities"]
     require(manifest["sourceSha256"] == CORE_SHA["Rance10.ain"] and
-            manifest["capabilities"] in supported_profiles.get(manifest["profile"], ()) and
+            type(capabilities) is int and capabilities in supported_profiles.get(manifest["profile"], ()) and
             manifest["aliceOfflineParsePassed"] is True and
             file_sha(bridge_ain) == manifest["outputSha256"], "Bridge AIN and its full-profile build manifest do not match")
     dll = bridge_dll.read_bytes()
@@ -134,6 +137,9 @@ def prepare(source: Path, target: Path, save_root: Path, game_name: str,
             struct.unpack_from("<H", dll, pe + 4)[0] == 0x14C and
             struct.unpack_from("<H", dll, pe + 22)[0] & 0x2000, "Bridge DLL must be an x86 PE DLL")
     dll_hash = hashlib.sha256(dll).hexdigest().upper()
+    if "dllSha256" in manifest or capabilities & TREASURE_FIND_CAPABILITY:
+        require(dll_hash == manifest.get("dllSha256"),
+                "Use the matching bridge DLL and AIN from the same build.ps1 component build")
 
     # Exclusive creation prevents reuse of previous experiments. No cleanup/move of existing paths.
     target.parent.mkdir(parents=True, exist_ok=True)
