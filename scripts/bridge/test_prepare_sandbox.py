@@ -122,6 +122,18 @@ class SandboxTests(unittest.TestCase):
                     self.assertFalse(package.exists())
                     self.assertFalse((self.saves / "R10SandboxTest").exists())
 
+    def test_win32_player_package_alias_is_rejected_before_creation(self):
+        package = self.artifacts / "R10Trainer-v0.9.5-win-x86"
+        for suffix in (".", " ", ". "):
+            target = package.with_name(package.name + suffix) / "game"
+            with self.subTest(target=target), patch.object(Path, "mkdir", side_effect=AssertionError(
+                    "A player package alias must be rejected before creating directories")):
+                self.assertFalse(package.exists())
+                with self.assertRaisesRegex(ValueError, "trainer package"):
+                    self.prepare(target=target)
+                self.assertFalse(package.exists())
+                self.assertFalse((self.saves / "R10SandboxTest").exists())
+
     def test_similar_names_and_nested_sandbox_directories_remain_allowed(self):
         for index, relative in enumerate(("R10Trainer-v0.9.5-win-x86-test/game",
                                           "my-R10Trainer-win-x86/game", "nested/game-copy")):

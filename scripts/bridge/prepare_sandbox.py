@@ -96,7 +96,8 @@ def prepare(source: Path, target: Path, save_root: Path, game_name: str,
     artifacts = ARTIFACTS.resolve()
     require(target.is_relative_to(artifacts) and target != artifacts,
             "Target must be a new subdirectory of this repository's artifacts")
-    require(not any(TRAINER_PACKAGE_NAME.fullmatch(part) for part in target.relative_to(artifacts).parts),
+    # resolve() can keep these suffixes for missing directories, which Win32 may strip on creation.
+    require(not any(TRAINER_PACKAGE_NAME.fullmatch(part.rstrip(" .")) for part in target.relative_to(artifacts).parts),
             "A game copy must never be prepared inside the trainer package")
     require(not target.exists(), f"Target already exists; choose a new directory: {target}")
     save_game = save_root / game_name

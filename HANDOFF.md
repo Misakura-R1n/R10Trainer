@@ -17,7 +17,7 @@
 | 范围 | 本地证据 |
 |---|---|
 | 故障状态下关闭组件 | `artifacts/bridge/20261114-fix-runtime.log`。模拟验证外部内存连接报错时仍可关闭活动组件，同时拒绝启用、数值写入、失联/异进程组件以及两层排队期间更换的会话。同会话读档后仍可关闭。未启动游戏。 |
-| MCP 取消与隔离路径 | `artifacts/bridge/20261114-fix-managed.log` 覆盖迟到取消后继续 ping、退出清理和正常在途取消。`artifacts/bridge/20261114-fix-sandbox.log` 覆盖旧版、版本化、预发布及嵌套玩家包路径在创建目录前被拒绝；符号链接用例因 Windows 权限不足跳过。 |
+| MCP 取消与隔离路径 | `artifacts/bridge/20261114-fix-managed.log` 覆盖迟到取消后继续 ping、退出清理和正常在途取消。`artifacts/bridge/20261114-fix-sandbox.log` 覆盖旧版、版本化、预发布及嵌套玩家包路径。`artifacts/bridge/20261114-sandbox-alias.log` 验证包目录尚未创建时，尾随句点和空格的别名也会在创建前被拒绝。符号链接用例因 Windows 权限不足跳过。 |
 | 共享物品★ | `artifacts/live/item-star/verification.json` 记录中文 BugFix 隔离实机。设为 ★40 后，魔剑 卡奥斯的 HP / AT 从 0 / 300 变为 1,350 / 4,050，队伍综合 HP / AT 从 2,250 / 2,525 变为 4,950 / 7,625。原档仍为 ★0，新档重载为 ★40，关闭修改器后回读一致。`artifacts/bridge/item-star-build.log` 记录模拟回归、172 项 x86 辅助进程检查及八版离线安装还原。符号链接用例因 Windows 权限不足跳过。 |
 | 中文 BugFix 卡表读取 | `artifacts/live/optimization/cards.json`。同一隔离存档各测 5 次，1,134 张卡的完整读取从 36 次请求降至 12 次，中位耗时从 1.69 秒降至 0.57 秒。持有状态刷新用 5 次请求，中位耗时 0.52 秒。卡片资料和持有状态回读一致。`identity.json` 记录组件还原和源文件校验。 |
 | 配方导出与安装器 | `artifacts/live/optimization/bench/recipe.json` 记录八版配方导出从 42.30 秒降至 11.80 秒，输出 SHA-256 一致。`managed.json` 记录 x86 下 BugFix AIN 应用配方的分配量中位数从 139.54 MiB 降至 105.18 MiB，编码字节一致。`artifacts/bridge/optimization-install.log` 记录八版逐字节还原和 162 项原生辅助进程检查。符号链接用例因 Windows 权限不足跳过。 |
