@@ -40,8 +40,16 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
         finally
         {
             await lifetime.CancelAsync().ConfigureAwait(false);
-            foreach (var pending in _pending.Values) await pending.CancelAsync().ConfigureAwait(false);
+            foreach (var pending in _pending.Values) await CancelIfActiveAsync(pending).ConfigureAwait(false);
         }
+    }
+
+    private static async Task CancelIfActiveAsync(CancellationTokenSource pending)
+    {
+        // A request can finish and dispose its lifetime after a notifier or
+        // shutdown has captured it. Cancellation of a completed request is a no-op.
+        try { await pending.CancelAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { }
     }
 
     private async Task DispatchAsync(string line, Stream output, CancellationToken cancellationToken)
@@ -70,7 +78,7 @@ public sealed class McpServer(IBridgeClient bridge, IGameInput? gameInput = null
         {
             if (method == "notifications/cancelled" && request["params"] is JsonObject notification && notification["requestId"] is { } cancelledId &&
                 _pending.TryGetValue(cancelledId.ToJsonString(), out var pending))
-                await pending.CancelAsync().ConfigureAwait(false);
+                await CancelIfActiveAsync(pending).ConfigureAwait(false);
             return null;
         }
         if (id is not JsonValue value || !(value.TryGetValue<string>(out _) || value.TryGetValue<long>(out _)))
