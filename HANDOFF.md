@@ -4,8 +4,8 @@
 
 | 项目 | 位置 |
 |---|---|
-| 源码 | 默认分支 `codex/initial-import` 含尚未发布的资源修复。升级时先恢复旧组件，再安装新版配套的 `full` AIN 和 DLL，随后重启游戏。 |
-| 本地玩家包 | `artifacts/R10Trainer-v0.9.6-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json`。 |
+| 源码 | v0.9.7，默认分支 `codex/initial-import`。升级时先恢复旧组件，再安装新版配套的 `full` AIN 和 DLL，随后重启游戏。 |
+| 本地玩家包 | `artifacts/R10Trainer-v0.9.7-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json`。 |
 | 共享物品★实机副本 | `artifacts/item-star-game`。游戏已退出，隔离存档路径见 `artifacts/live/item-star/bridge-sandbox.json`。 |
 | 宝箱发现率实机副本 | `artifacts/treasure-find-game`。游戏和修改器已退出，副本已恢复为配套的新版 full AIN 和 DLL。隔离存档路径见副本的 `bridge-sandbox.json`。 |
 | 资源实机副本 | `artifacts/live/resource-hud/game-bugfix`，已恢复为配套的 `full` 组件。游戏和修改器均已退出，隔离存档及文件校验见同目录的 `bridge-sandbox.json` 和上级目录的 `integrity.json`。 |
@@ -33,7 +33,7 @@
 | 中文 BugFix 战斗恢复 | `artifacts/live/v0.9.2-mcp.jsonl`、`v0.9.2-player-live.jsonl`。测试入口调用游戏引擎生成中断存档，原样 `full` 组件通过 `Reload.asd` 进入 `ResumeLoad`。实测 AP 全满、双方 HP、同回合重复行动、越界和旧目标拒绝。战斗与胜利结算中拒绝卡片请求，回到地图后可读取 1,134 张卡。存档指纹见 `v0.9.2-suspend-identity.json`。 |
 | Resume 与八版安装恢复 | `artifacts/bridge/20261112-r2-validation.log`。AIN 离线测试覆盖恢复场景、战斗对象和选择器判定，x86 辅助进程覆盖战斗规则与 HP 编辑的重新就绪。八版逐字节恢复通过。符号链接用例因 Windows 权限不足跳过。 |
 | MCP 独立进程 | `artifacts/bridge/20261112-review-fixes-mcp.log`。重复键返回解析错误，后续请求正常。 |
-| v0.9.6 玩家包 | `artifacts/bridge/v0.9.6-package-build.log` 记录构建验证，`v0.9.6-package-integrity.json` 记录 ZIP 和组件指纹，`v0.9.6-release-check.json` 记录远端下载校验。 |
+| v0.9.7 玩家包 | `artifacts/bridge/v0.9.7-package-build.log` 记录构建验证，`artifacts/bridge/v0.9.7-package-integrity.json` 记录 ZIP 和组件指纹，`artifacts/bridge/v0.9.7-release-check.json` 记录远端下载校验。 |
 | AIN 离线校验 | `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/` 下的 `bridge-build.json` |
 | AIN 与 DLL 配套检查 | `artifacts/bridge/20261114-mixed-components.log` 记录桥接回归、多版本组件构建及安装还原。`artifacts/bridge/20261114-mixed-components-offline.log` 验证新版 full AIN 配 v0.9.5 DLL 时，提前拒绝准备副本和导出配方，配套 DLL 可用。`artifacts/bridge/20261114-mixed-components-native.log` 记录实际 DLL 的 x86 辅助进程检查，两种新旧混用均禁用宝箱发现率，配套时能开启和关闭。`artifacts/live/treasure-find/verification.json` 记录中文 BugFix 实机读档后，新版 full AIN 配 v0.9.5 DLL 时游戏已就绪，宝箱开关禁用，点击未提交命令。 |
 | 普通战斗与 AP | `artifacts/live/battle-features-gameplay.jsonl`。对应场景、附加测试条件和组件身份见 `battle-features-fixture.json`、`battle-features-integrity.json`。 |
