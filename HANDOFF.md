@@ -7,6 +7,7 @@
 | 源码 | v0.9.5 后未发布修复，默认分支 `codex/initial-import`。宝箱发现率需要重新生成并安装新版 `full` 组件；现有 v0.9.5 玩家包不含这些修复。 |
 | 本地玩家包 | `artifacts/R10Trainer-v0.9.5-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json` |
 | 共享物品★实机副本 | `artifacts/item-star-game`。游戏已退出，隔离存档路径见 `artifacts/live/item-star/bridge-sandbox.json`。 |
+| 宝箱发现率实机副本 | `artifacts/treasure-find-game`。游戏和修改器已退出，副本已恢复为配套的新版 full AIN 和 DLL。隔离存档路径见副本的 `bridge-sandbox.json`。 |
 | 多版本构建输入 | `artifacts/patch-compatibility-inputs/<版本 ID>/Rance10.ain`。`bugfix` 和 `japanese-original` 目录含各自的 EXE 与 INI |
 | 中文 BugFix 实机清单 | `artifacts/live/drop-dedup/identity.json` 记录隔离存档、组件指纹及源文件校验结果。 |
 
@@ -31,16 +32,16 @@
 | MCP 独立进程 | `artifacts/bridge/20261112-review-fixes-mcp.log`。重复键返回解析错误，后续请求正常。 |
 | v0.9.5 玩家包 | `artifacts/bridge/v0.9.5-package-build.log`、`v0.9.5-package-integrity.json`、`v0.9.5-release-check.json` |
 | AIN 离线校验 | `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/` 下的 `bridge-build.json` |
-| AIN 与 DLL 配套检查 | `artifacts/bridge/20261114-mixed-components.log` 记录桥接回归、多版本组件构建及安装还原。`20261114-mixed-components-offline.log` 验证新版 full AIN 配 v0.9.5 DLL 时，提前拒绝准备副本和导出配方，配套 DLL 可用。`20261114-mixed-components-native.log` 记录实际 DLL 的 x86 辅助进程检查，两种新旧混用均禁用宝箱发现率，配套时能开启和关闭。未启动游戏。 |
+| AIN 与 DLL 配套检查 | `artifacts/bridge/20261114-mixed-components.log` 记录桥接回归、多版本组件构建及安装还原。`artifacts/bridge/20261114-mixed-components-offline.log` 验证新版 full AIN 配 v0.9.5 DLL 时，提前拒绝准备副本和导出配方，配套 DLL 可用。`artifacts/bridge/20261114-mixed-components-native.log` 记录实际 DLL 的 x86 辅助进程检查，两种新旧混用均禁用宝箱发现率，配套时能开启和关闭。`artifacts/live/treasure-find/verification.json` 记录中文 BugFix 实机读档后，新版 full AIN 配 v0.9.5 DLL 时游戏已就绪，宝箱开关禁用，点击未提交命令。 |
 | 普通战斗与 AP | `artifacts/live/battle-features-gameplay.jsonl`。对应场景、附加测试条件和组件身份见 `battle-features-fixture.json`、`battle-features-integrity.json`。 |
 | 地图、资源、HP 保护与宝箱 | `artifacts/live/feature-audit-gameplay.jsonl`、`feature-audit-published-map.log`、`feature-audit-published-resources.log` |
-| 宝箱发现率重算冲突修复 | `artifacts/bridge/20261114-fix-treasure-full.log`：核心 81 项、桥接 102 项、x86 辅助进程 178 项、AIN 兼容 2 项及安装恢复 33 项通过，八版逐字节恢复一致；符号链接用例因 Windows 权限不足跳过。宝箱仅由游戏线程在奖励消费点替换本次加成，Core 已无该字段的写入入口；模拟重算期间不再引发暂停，其他数据事务的冲突保护仍保留。八版 full / controls 字节码回归检查自然值、开关恢复及字段不变；既有 helper 和恢复入口保持稳定。修复后交叉审查补齐了 CODE 长度常量，实际生成组件校验通过；未确认其他新问题。新效果尚未实机验证。原故障复现保留在 Git 提交 `dc5918c` 与 `artifacts/bridge/v0.9.5-treasure-recalculation-test.log`。 |
+| 宝箱发现率重算冲突修复 | `artifacts/bridge/20261114-fix-treasure-full.log` 记录核心 81 项、桥接 102 项、x86 辅助进程 178 项、AIN 兼容 2 项及安装恢复 33 项通过，八版逐字节恢复一致。符号链接用例因 Windows 权限不足跳过。新版在游戏线程计算奖励时应用加成，Core 已移除该字段的写入入口。模拟重算期间不再引发暂停，其他数据事务的冲突保护仍保留。八版 full / controls 字节码回归覆盖自然值、开关恢复及字段不变。原故障复现见 Git 提交 `dc5918c` 与 `artifacts/bridge/v0.9.5-treasure-recalculation-test.log`。 |
+| 中文 BugFix 宝箱发现率实机 | `artifacts/live/treasure-find/verification.json` 记录 `cc83434` 版修改器和配套 full 组件。开启后打开「部队编制」触发重算，队伍自然值仍为 0%，未出现写入暂停。同一隔离档的序曲普通战斗各测一次，均用修改器将敌方 HP 降至 1 并首轮击败。开启时结算的部队加成为 100%，总概率 115%，获得宝箱。关闭并重读同档后，部队加成为 0%，总概率 14%，本场无掉落。宝箱开关开启时难度可从 1 写为 2 再恢复为 1，关闭修改器后开关复位。 |
 | 卡片获取、共享 ★ 和存读档 | `artifacts/live/card-access-live.jsonl`、`card-management-live.jsonl` |
 | v0.9.0 战后卡片读取故障 | 中文 BugFix 运行中只读核对。桥接心跳正常，胜利结算已退出，`g_battleContext` 保留，`cardContext` 为 0。 |
 
 ## 待验证
 
-- 在明确选定的隔离存档中验证新版宝箱发现率的战斗奖励效果、队伍重算及关闭后的自然加成。此次修复未启动游戏或改动原游戏、存档。
 - 用中文 BugFix 隔离存档核对从结算或选卡场景直接恢复时的卡片管理限制及退出后的卡表读取。
 - 用第二部隔离存档补测通用卡去重的实机表现。
 - 核对「宝箱卡牌可获取＋1」在低阶宝箱、困难难度和已有周目奖励时的实机效果。
