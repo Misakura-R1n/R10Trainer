@@ -34,7 +34,7 @@ public static class FeatureCatalog
         new FeatureDefinition(FeatureId.Friendship, "友情", FeatureGroup.Resources, FeatureKind.Number, 0, 3, Help:"可用友情次数，不改变角色好感或至交。"),
         new FeatureDefinition(FeatureId.Resources, "资源全满", FeatureGroup.Resources, FeatureKind.Toggle, Help:"持续补满食券 / 金块、勋章和友情，不含四国战果。"),
         new FeatureDefinition(FeatureId.NoDuplicateCards, "随机掉落不重复", FeatureGroup.Resources, FeatureKind.Toggle, Help:"排除当前存档已拥有的同一张卡，并避免同批随机奖励重复；保留固定奖励与消耗型奖励，无卡可抽时补餐券。需要安装游戏组件；下一批奖励生效。"),
-        new FeatureDefinition(FeatureId.Treasure, "宝箱发现率 +100%", FeatureGroup.Resources, FeatureKind.Toggle, Help:"增加发现加成，不能保证每次都有宝箱。"),
+        new FeatureDefinition(FeatureId.Treasure, "宝箱发现率 +100%", FeatureGroup.Resources, FeatureKind.Toggle, Help:"需要安装游戏组件；结算奖励时将本次队伍发现加成设为 100%，不能保证每次都有宝箱。"),
         new FeatureDefinition(FeatureId.ExtraTreasurePick, "宝箱卡牌可获取＋1", FeatureGroup.Resources, FeatureKind.Toggle, Help:"下次选卡时可多领取一张，只有两张候选的宝箱会提供三张。与同名周目奖励共用一次加成。"),
         new FeatureDefinition(FeatureId.Unit, "部队等级", FeatureGroup.Growth, FeatureKind.Number, 0, 999),
         new FeatureDefinition(FeatureId.Star, "角色★等级", FeatureGroup.Growth, FeatureKind.Choice, 10, 200, Help:"批量修改已创建角色；清空经验、可能降级，也可能影响继承。"),
@@ -44,7 +44,7 @@ public static class FeatureCatalog
     public static FeatureDefinition Get(FeatureId id) => All.First(x => x.Id == id);
     public static bool IsBattleHp(FeatureId id) => id is FeatureId.PlayerHp or FeatureId.EnemyHp;
     internal static bool RequiresGameComponent(FeatureId id) => IsBattleHp(id) ||
-        id is FeatureId.NoDuplicateCards or FeatureId.ExtraTreasurePick or FeatureId.ApFull or FeatureId.UnlimitedSkills
+        id is FeatureId.NoDuplicateCards or FeatureId.Treasure or FeatureId.ExtraTreasurePick or FeatureId.ApFull or FeatureId.UnlimitedSkills
             or FeatureId.StatusImmunity or FeatureId.RepeatActions or FeatureId.UnlimitedActions;
     public static bool ValidValue(FeatureId id, decimal value)
     {

@@ -114,7 +114,8 @@ internal static class Program
         string SetFeature(string name,bool enabled,int gen=4) => JsonSerializer.Serialize(new {op="set_feature",feature=name,enabled,generation=gen});
         Check(Request(SetFeature("food_redraw",true)).GetProperty("error").GetString()=="script_hook_unavailable","old script rejects new branch switches");
         Check(Request(SetFeature("extra_treasure_pick",true)).GetProperty("error").GetString()=="script_hook_unavailable","old script rejects extra treasure picks");
-        tick(0,1,255|8192); tick(1,16,16);
+        Check(Request(SetFeature("treasure_find",true)).GetProperty("error").GetString()=="script_hook_unavailable","old script rejects treasure discovery override");
+        tick(0,1,255|8192|32768); tick(1,16,16);
         Request(SetFeature("food_redraw",true)); Check(feature(6,0,0)==0,"queued redraw does not alter script branch");
         tick(1,16,16); Check(feature(6,0,0)==1 && feature(7,0,0)==0,"redraw enabled independently");
         Check(Task.Run(()=>feature(6,0,0)).GetAwaiter().GetResult()==0,"background thread cannot query script feature");
@@ -128,8 +129,24 @@ internal static class Program
             "game thread applies and reports extra treasure pick");
         Request(SetFeature("extra_treasure_pick",false)); tick(1,16,16);
         Check(feature(20,0,0)==0 && feature(7,0,0)==1,"turning off the extra pick preserves redistribution");
+        Request(SetFeature("treasure_find",true));
+        Check(feature(25,0,0)==0 && !Request("{\"op\":\"get_state\"}").GetProperty("treasureFind").GetBoolean(),
+            "queued treasure discovery cannot alter reward calculation");
+        tick(1,16,16);
+        Check(feature(25,0,0)==1 && Request("{\"op\":\"get_state\"}").GetProperty("treasureFind").GetBoolean(),
+            "game thread applies and reports treasure discovery override");
+        Check(Task.Run(()=>feature(25,0,0)).GetAwaiter().GetResult()==0,"background thread cannot consume treasure discovery override");
+        int revokedTreasure=Request(SetFeature("treasure_find",false)).GetProperty("id").GetInt32();
+        tick(0,1,255|8192); tick(1,16,16);
+        Check(feature(25,0,0)==0 && Request(JsonSerializer.Serialize(new {op="get_command_result",id=revokedTreasure})).GetProperty("state").GetString()=="rejected",
+            "removed treasure capability suppresses effect and rejects pending switch");
+        tick(0,1,255|8192|32768); tick(1,16,16);
+        Request(SetFeature("treasure_find",false)); tick(1,16,16);
+        Check(feature(25,0,0)==0 && !Request("{\"op\":\"get_state\"}").GetProperty("treasureFind").GetBoolean() && feature(7,0,0)==1,
+            "treasure discovery disable immediately restores natural reward input and preserves other rules");
+        Request(SetFeature("treasure_find",true)); tick(1,16,16);
         int stalePick=Request(SetFeature("extra_treasure_pick",true)).GetProperty("id").GetInt32();
-        tick(2,1,5005); Check(feature(7,0,0)==0,"loading suspends branch switches");
+        tick(2,1,5005); Check(feature(7,0,0)==0 && feature(25,0,0)==0,"loading suspends branch switches");
         tick(1,16,16);
         Check(Request(JsonSerializer.Serialize(new {op="get_command_result",id=stalePick})).GetProperty("state").GetString()=="rejected"
             && feature(20,0,0)==0,"load rejects pending extra treasure pick from the old generation");

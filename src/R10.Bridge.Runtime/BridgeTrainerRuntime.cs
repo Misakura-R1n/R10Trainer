@@ -12,6 +12,7 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             [FeatureId.Hp] = ("hp_guard", 4, BattleRules.None),
             [FeatureId.NoDuplicateCards] = ("no_duplicate_cards", 32, BattleRules.None),
             [FeatureId.ExtraTreasurePick] = ("extra_treasure_pick", BridgeState.ExtraTreasurePickCapability, BattleRules.None),
+            [FeatureId.Treasure] = ("treasure_find", BridgeState.TreasureFindCapability, BattleRules.None),
             [FeatureId.Resources] = ("resources_full", 256, BattleRules.None),
             [FeatureId.Redraw] = ("food_redraw", 64, BattleRules.None),
             [FeatureId.Redistribute] = ("auto_redistribute", 128, BattleRules.None),
@@ -280,6 +281,10 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             Detail:cardsReady ? $"已排除 {state.FilteredCards ?? 0} 个候选；餐券补位 {state.FallbackCards ?? 0} 次。下一批奖励生效。" : "请安装新版游戏组件并重新启动游戏。",
             Help:FeatureCatalog.Get(FeatureId.NoDuplicateCards).Help,ActiveDescription:"游戏线程已应用开关；固定奖励和消耗型奖励保留原规则。");
         bool extraPickReady = CanWrite(state, FeatureId.ExtraTreasurePick);
+        bool treasureReady = CanWrite(state, FeatureId.Treasure);
+        features[FeatureId.Treasure] = new(Requested: state.TreasureFind, Active: state.TreasureFind && treasureReady,
+            CanEdit: treasureReady, Detail: treasureReady ? null : "请安装新版游戏组件并重新启动游戏。",
+            Help: FeatureCatalog.Get(FeatureId.Treasure).Help, ActiveDescription: "下次计算战斗奖励时生效。");
         features[FeatureId.ExtraTreasurePick] = new(Requested: state.ExtraTreasurePick, Active: state.ExtraTreasurePick && extraPickReady,
             CanEdit: extraPickReady, Detail: extraPickReady ? null : "请安装新版游戏组件并重启游戏。",
             Help: FeatureCatalog.Get(FeatureId.ExtraTreasurePick).Help, ActiveDescription: "下次进入选卡界面时生效。");

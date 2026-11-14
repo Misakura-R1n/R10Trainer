@@ -16,7 +16,8 @@ import subprocess
 import sys
 import zlib
 from ain_profiles import LAYOUTS, ROOT, SECTION_BOUNDS, VERSIONS, VERSION_BY_SOURCE
-from feature_ain import EXTRA_TREASURE_PICK_CAPABILITY, install_extra_treasure_pick, install_features
+from feature_ain import (EXTRA_TREASURE_PICK_CAPABILITY, TREASURE_FIND_CAPABILITY,
+                         install_extra_treasure_pick, install_features, install_treasure_find)
 
 ARTIFACTS = ROOT / "artifacts"
 SOURCE_SHA = VERSIONS[0]["sourceSha256"]
@@ -270,7 +271,7 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
     capabilities = 2047 if profile == "controls" else 2031 if profile == "full" else 1
     if profile in {"full", "controls"}:
         from card_management_ain import ITEM_STAR_CAPABILITY
-        capabilities |= EXTRA_TREASURE_PICK_CAPABILITY | ITEM_STAR_CAPABILITY
+        capabilities |= EXTRA_TREASURE_PICK_CAPABILITY | ITEM_STAR_CAPABILITY | TREASURE_FIND_CAPABILITY
         if layout.code_page == 932:
             capabilities |= 2048
         if layout.patch_managed_rerolls:
@@ -456,6 +457,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
                              add_function.entries[battle_resume], "restore active battle")
         item_star = install_item_star(add_function, card_pump, functions, require)
         replace_added_target(resume_pump, card_call, "CALLFUNC", card_pump, item_star, "service card and shared item star requests")
+        # Keep the previous helpers and saved return PCs stable across upgrades.
+        install_treasure_find(add_function, replace_code, instruction, at)
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))

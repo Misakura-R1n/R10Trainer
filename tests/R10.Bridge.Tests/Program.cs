@@ -47,7 +47,7 @@ await Test("set_feature sends exact generation and only queues", async () =>
 {
     var transport = new FixtureTransport(_ => Ok(new { id = 7, state = "queued" }));
     var client = new BridgeClient(42, transport);
-    foreach (string feature in new[] { "hp_guard", "extra_treasure_pick" })
+    foreach (string feature in new[] { "hp_guard", "extra_treasure_pick", "treasure_find" })
     {
         var command = await client.SetFeatureAsync(feature, true, 3);
         Check(command.Id == 7 && !command.IsTerminal);
@@ -163,8 +163,9 @@ await Test("state carries heartbeat freshness and guard counters", async () =>
 {
     var json = JsonNode.Parse(State())!; json["heartbeatAgeMs"] = 2001; json["blockedHits"] = 5; json["lastRequestedHp"] = 0; json["scriptVersion"] = 1; json["capabilities"] = 15;
     json["extraTreasurePick"] = true;
+    json["treasureFind"] = true;
     var state = await new BridgeClient(42, new FixtureTransport(_ => json.ToJsonString())).GetStateAsync();
-    Check(state.GameThreadResponsive == false && state.BlockedHits == 5 && state.LastRequestedHp == 0 && state.ScriptVersion == 1 && state.HpGuardAvailable && state.ExtraTreasurePick);
+    Check(state.GameThreadResponsive == false && state.BlockedHits == 5 && state.LastRequestedHp == 0 && state.ScriptVersion == 1 && state.HpGuardAvailable && state.ExtraTreasurePick && state.TreasureFind);
 });
 await Test("unadvertised HP hook remains unavailable", async () => Check(!(await new BridgeClient(42, new FixtureTransport(_ => State())).GetStateAsync()).HpGuardAvailable));
 await Test("load failure evidence survives ready phase and negative quick-load slot", async () =>
@@ -294,6 +295,14 @@ await Test("MCP queued is not applied and wait polls only", async () =>
     Check(result["outcome"]!.GetValue<string>() == "applied" && !result["outcomeUnknown"]!.GetValue<bool>());
     Check(transport.Requests.Count(request => request.GetProperty("op").GetString() == "set_feature") == 1);
     Check(result["effectVerification"]!.GetValue<string>() == "not_verified");
+});
+await Test("MCP treasure discovery uses the component toggle with the supplied session", async () =>
+{
+    var transport = new FixtureTransport(_ => Ok(new { id = 7, state = "queued" }));
+    var server = new McpServer(new BridgeClient(42, transport)); await Initialize(server);
+    var result = Content(await Call(server, "set_feature", new { session = "42:123", feature = "treasure_find", enabled = true, generation = 3 }));
+    Check(result["outcome"]!.GetValue<string>() == "queued");
+    Check(transport.Requests.Single().GetRawText() == "{\"op\":\"set_feature\",\"feature\":\"treasure_find\",\"enabled\":true,\"generation\":3}");
 });
 await Test("MCP bounded wait retains command ID and unknown outcome", async () =>
 {

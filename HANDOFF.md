@@ -4,7 +4,7 @@
 
 | 项目 | 位置 |
 |---|---|
-| 源码 | v0.9.5，默认分支 `codex/initial-import` |
+| 源码 | v0.9.5 后未发布修复，默认分支 `codex/initial-import`。宝箱发现率需要重新生成并安装新版 `full` 组件；现有 v0.9.5 玩家包不含这些修复。 |
 | 本地玩家包 | `artifacts/R10Trainer-v0.9.5-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json` |
 | 共享物品★实机副本 | `artifacts/item-star-game`。游戏已退出，隔离存档路径见 `artifacts/live/item-star/bridge-sandbox.json`。 |
 | 多版本构建输入 | `artifacts/patch-compatibility-inputs/<版本 ID>/Rance10.ain`。`bugfix` 和 `japanese-original` 目录含各自的 EXE 与 INI |
@@ -17,6 +17,7 @@
 | 范围 | 本地证据 |
 |---|---|
 | 故障状态下关闭组件 | `artifacts/bridge/20261114-fix-runtime.log`。模拟验证外部内存连接报错时仍可关闭活动组件，同时拒绝启用、数值写入、失联/异进程组件以及两层排队期间更换的会话。同会话读档后仍可关闭。未启动游戏。 |
+| MCP 取消与隔离路径 | `artifacts/bridge/20261114-fix-managed.log` 覆盖迟到取消后继续 ping、退出清理和正常在途取消。`artifacts/bridge/20261114-fix-sandbox.log` 覆盖旧版、版本化、预发布及嵌套玩家包路径在创建目录前被拒绝；符号链接用例因 Windows 权限不足跳过。 |
 | 共享物品★ | `artifacts/live/item-star/verification.json` 记录中文 BugFix 隔离实机。设为 ★40 后，魔剑 卡奥斯的 HP / AT 从 0 / 300 变为 1,350 / 4,050，队伍综合 HP / AT 从 2,250 / 2,525 变为 4,950 / 7,625。原档仍为 ★0，新档重载为 ★40，关闭修改器后回读一致。`artifacts/bridge/item-star-build.log` 记录模拟回归、172 项 x86 辅助进程检查及八版离线安装还原。符号链接用例因 Windows 权限不足跳过。 |
 | 中文 BugFix 卡表读取 | `artifacts/live/optimization/cards.json`。同一隔离存档各测 5 次，1,134 张卡的完整读取从 36 次请求降至 12 次，中位耗时从 1.69 秒降至 0.57 秒。持有状态刷新用 5 次请求，中位耗时 0.52 秒。卡片资料和持有状态回读一致。`identity.json` 记录组件还原和源文件校验。 |
 | 配方导出与安装器 | `artifacts/live/optimization/bench/recipe.json` 记录八版配方导出从 42.30 秒降至 11.80 秒，输出 SHA-256 一致。`managed.json` 记录 x86 下 BugFix AIN 应用配方的分配量中位数从 139.54 MiB 降至 105.18 MiB，编码字节一致。`artifacts/bridge/optimization-install.log` 记录八版逐字节还原和 162 项原生辅助进程检查。符号链接用例因 Windows 权限不足跳过。 |
@@ -32,12 +33,13 @@
 | AIN 离线校验 | `artifacts/bridge/full/` 和 `artifacts/bridge/full-compatibility/` 下的 `bridge-build.json` |
 | 普通战斗与 AP | `artifacts/live/battle-features-gameplay.jsonl`。对应场景、附加测试条件和组件身份见 `battle-features-fixture.json`、`battle-features-integrity.json`。 |
 | 地图、资源、HP 保护与宝箱 | `artifacts/live/feature-audit-gameplay.jsonl`、`feature-audit-published-map.log`、`feature-audit-published-resources.log` |
-| v0.9.5 宝箱发现率写入暂停 | `tests/R10.Tests/DataTests.cs` 用模拟内存复现首次回读为 100、最终回读前游戏重算清零。修改器报「批量写入最终校验失败」「未能确认恢复」，关闭该开关并暂停外部数据写入，字段恢复到 22 后仍拒绝后续写入。`artifacts/bridge/v0.9.5-treasure-recalculation-test.log` 记录构建和检查结果。实机只读检查确认报错地址为当前队伍的宝箱发现加成字段，未实机复现该时序。 |
+| 宝箱发现率重算冲突修复 | `artifacts/bridge/20261114-fix-treasure-full.log`：核心 81 项、桥接 102 项、x86 辅助进程 178 项、AIN 兼容 2 项及安装恢复 33 项通过，八版逐字节恢复一致；符号链接用例因 Windows 权限不足跳过。宝箱仅由游戏线程在奖励消费点替换本次加成，Core 已无该字段的写入入口；模拟重算期间不再引发暂停，其他数据事务的冲突保护仍保留。八版 full / controls 字节码回归检查自然值、开关恢复及字段不变；既有 helper 和恢复入口保持稳定。修复后交叉审查补齐了 CODE 长度常量，实际生成组件校验通过；未确认其他新问题。新效果尚未实机验证。原故障复现保留在 Git 提交 `dc5918c` 与 `artifacts/bridge/v0.9.5-treasure-recalculation-test.log`。 |
 | 卡片获取、共享 ★ 和存读档 | `artifacts/live/card-access-live.jsonl`、`card-management-live.jsonl` |
 | v0.9.0 战后卡片读取故障 | 中文 BugFix 运行中只读核对。桥接心跳正常，胜利结算已退出，`g_battleContext` 保留，`cardContext` 为 0。 |
 
 ## 待验证
 
+- 在明确选定的隔离存档中验证新版宝箱发现率的战斗奖励效果、队伍重算及关闭后的自然加成。此次修复未启动游戏或改动原游戏、存档。
 - 用中文 BugFix 隔离存档核对从结算或选卡场景直接恢复时的卡片管理限制及退出后的卡表读取。
 - 用第二部隔离存档补测通用卡去重的实机表现。
 - 核对「宝箱卡牌可获取＋1」在低阶宝箱、困难难度和已有周目奖励时的实机效果。

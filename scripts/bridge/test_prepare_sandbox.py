@@ -73,6 +73,16 @@ class SandboxTests(unittest.TestCase):
             self.prepare()
         self.assertFalse((self.saves / "R10SandboxTest").exists())
 
+    def test_treasure_component_profiles_are_accepted(self):
+        for profile, capabilities in (("full", 59375), ("controls", 59391)):
+            with self.subTest(profile=profile):
+                manifest = dict(self.manifest, profile=profile, capabilities=capabilities)
+                (self.bridge / "bridge-build.json").write_text(json.dumps(manifest), encoding="utf-8")
+                target = self.artifacts / profile
+                result = self.prepare(target=target, game_name=f"R10Treasure{profile}")
+                self.assertEqual(Path(result["target"]), target.resolve())
+                self.assertFalse(result["launched"])
+
     def test_existing_save_namespace_is_rejected_before_game_creation(self):
         (self.saves / "R10SandboxTest").mkdir()
         with self.assertRaisesRegex(ValueError, "already exists"):

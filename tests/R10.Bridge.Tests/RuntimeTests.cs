@@ -6,6 +6,19 @@ static class RuntimeTests
 {
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("treasure discovery requires its component capability and closes the owned toggle", async () =>
+        {
+            var client = new RuntimeFixture();
+            var runtime = new BridgeTrainerRuntime(client);
+            Check(!(await runtime.SetToggleAsync(FeatureId.Treasure, true)).Success && client.Writes.Count == 0);
+            client.State = client.State with { Capabilities = 15 | BridgeState.TreasureFindCapability };
+            Check((await runtime.SetToggleAsync(FeatureId.Treasure, true)).Success);
+            Check(runtime.Current.Features[FeatureId.Treasure] is { Requested: true, Active: true, CanEdit: true });
+            Check((await runtime.SetToggleAsync(FeatureId.Treasure, false)).Success && !client.State.TreasureFind);
+            Check((await runtime.SetToggleAsync(FeatureId.Treasure, true)).Success);
+            Check((await runtime.TryCloseAsync()).Success && !client.State.TreasureFind);
+            Check(client.FeatureWrites.SequenceEqual(new[] { "treasure_find:True", "treasure_find:False", "treasure_find:True", "treasure_find:False" }));
+        });
         await test("component cancellation queued behind polling retains its original session", async () =>
         {
             foreach (bool unified in new[] { false, true })
@@ -327,6 +340,7 @@ static class RuntimeTests
                 "resources_full"=>State with { ResourcesFull=enabled },
                 "food_redraw"=>State with { FoodRedraw=enabled }, "auto_redistribute"=>State with { AutoRedistribute=enabled },
                 "extra_treasure_pick"=>State with { ExtraTreasurePick=enabled },
+                "treasure_find"=>State with { TreasureFind=enabled },
                 _=>throw new InvalidOperationException("Unknown fixture feature") };
             return Task.FromResult(new BridgeCommand(Writes.Count, "applied"));
         }

@@ -10,6 +10,7 @@ import build_instrumented_ain as builder
 from battle_ain import AP_FULL, REPEAT_ACTIONS, STATUS_IMMUNITY, UNLIMITED_ACTIONS, UNLIMITED_SKILLS
 from card_management_ain import (ADD_ITEM_STAR, CLAIM_ITEM_STAR, COMMON_PARAMS, COMPLETE_ITEM_STAR,
                                  GET_EFFECTIVE_ITEM_STAR, GET_ITEM_STAR, ITEM_STAR_CAPABILITY, PARTY, SET_ITEM_STAR)
+from feature_ain import TREASURE_FIND_CAPABILITY
 
 SOURCE: Path
 
@@ -479,7 +480,7 @@ class FullBuildTests(unittest.TestCase):
         self.assertEqual(vm.events, [("tick", 4, 2, 0)])
 
     def test_startup_capabilities_match_full_profile(self):
-        expected = 10223 | ITEM_STAR_CAPABILITY
+        expected = 10223 | ITEM_STAR_CAPABILITY | TREASURE_FIND_CAPABILITY
         self.assertEqual(self.report["capabilities"], expected)
         startup = next(h for h in self.report["hooks"] if h["id"] == 0x47DD)
         prefix = bytes.fromhex(startup["prefixHex"])

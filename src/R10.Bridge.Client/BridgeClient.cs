@@ -43,6 +43,7 @@ public sealed class BridgeClient : IBridgeClient
             CardBatchReadAvailable = response.TryGetProperty("cardBatchReadAvailable", out _) && Boolean(response, "cardBatchReadAvailable"),
             ItemStarAvailable = response.TryGetProperty("itemStarAvailable", out _) && Boolean(response, "itemStarAvailable"),
             ExtraTreasurePick = response.TryGetProperty("extraTreasurePick", out _) && Boolean(response, "extraTreasurePick"),
+            TreasureFind = response.TryGetProperty("treasureFind", out _) && Boolean(response, "treasureFind"),
             OrdinaryBattle = response.TryGetProperty("ordinaryBattle", out _) && Boolean(response, "ordinaryBattle"),
             BattleContext = response.TryGetProperty("battleContext", out _) ? BoundedInteger(response, "battleContext", int.MaxValue) : 0,
             BattleRules = response.TryGetProperty("battleRules", out _) ? (BattleRules)BoundedInteger(response, "battleRules", int.MaxValue) : BattleRules.None,
@@ -112,7 +113,7 @@ public sealed class BridgeClient : IBridgeClient
 
     public async Task<BridgeCommand> SetFeatureAsync(string feature, bool enabled, long generation, CancellationToken cancellationToken = default)
     {
-        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute" or "resources_full" or "extra_treasure_pick"
+        if (feature is not ("hp_guard" or "no_duplicate_cards" or "food_redraw" or "auto_redistribute" or "resources_full" or "extra_treasure_pick" or "treasure_find"
             or "ap_full" or "unlimited_skills" or "status_immunity" or "repeat_actions" or "unlimited_actions"))
             throw new BridgeException("unsupported_feature", "Unsupported bridge feature.");
         if (generation < 0) throw new ArgumentOutOfRangeException(nameof(generation));

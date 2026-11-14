@@ -254,7 +254,7 @@ public sealed class TrainerRuntime : ITrainerRuntime, IGameLoadObserver
             RefreshScene(true);
             if (GameplayReady)
             {
-                foreach (var id in new[] { FeatureId.Treasure, FeatureId.Resources, FeatureId.War }) Maintain(id);
+                foreach (var id in new[] { FeatureId.Resources, FeatureId.War }) Maintain(id);
                 foreach (var id in new[] { FeatureId.Turn, FeatureId.DeathRate, FeatureId.Army }) MaintainLock(id);
                 _values = _data!.ReadValues(_skippedValues); SynchronizeEngine();
             }

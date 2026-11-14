@@ -7,6 +7,8 @@ import struct
 
 EXTRA_TREASURE_PICK = 20
 EXTRA_TREASURE_PICK_CAPABILITY = 8192
+TREASURE_FIND = 25
+TREASURE_FIND_CAPABILITY = 32768
 
 
 def install_features(add_function, replace_code, instruction, relocate):
@@ -65,3 +67,27 @@ def install_extra_treasure_pick(add_function, replace_code, instruction, entry, 
     name = "R10Bridge_ExtraTreasurePick"
     function = add_function(name, 0, [], body)
     replace_code(pc, original, instruction("JUMP", add_function.entries[function]), name)
+
+
+def install_treasure_find(add_function, replace_code, instruction, relocate):
+    # CalcTreasure consumes the player's battle-status contribution here. Hooking
+    # the shared getter instead would also change CommonStatus.Add and persist
+    # the override during Party.RecalcStatus. Always read the natural value, then
+    # replace only this reward input; disabling immediately uses the latest base.
+    pc = relocate(0x3B8448)
+    original = instruction("PUSH", 0x65A3) + instruction("CALLMETHOD", 0)
+
+    def body(asm):
+        asm.code.extend(original)
+        for value in (TREASURE_FIND, 0, 0):
+            asm.emit("PUSH", value)
+        asm.emit("CALLHLL", 36, 4, -1)
+        asm.emit("IFZ", "done")
+        asm.emit("POP"); asm.emit("PUSH", 100)
+        asm.label("done")
+        asm.emit("JUMP", pc + len(original))
+
+    name = "R10Bridge_TreasureFind"
+    function = add_function(name, 0, [], body)
+    replace_code(pc, original, instruction("JUMP", add_function.entries[function]) +
+                 instruction("POP") * 3, name)

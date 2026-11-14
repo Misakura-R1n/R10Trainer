@@ -9,6 +9,34 @@ static class UnifiedRuntimeTests
     private static readonly string DirectoryB = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "R10-unified-fixture-b"));
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("unified treasure discovery never competes with recalculated status or suspends data writes", async () =>
+        {
+            var fixture = new DataFixture();
+            uint address = fixture.CommonStatus + 0x34;
+            fixture.Memory.Put(address, 22);
+            var epoch = new GameLoadEpoch(fixture.Memory.ProcessId, "fixture:treasure", 1, true);
+            var memory = new TrainerRuntime(() => new GameConnection(fixture.Memory, "fixture.ain"));
+            var bridge = new Fixture { Current = Snapshot(epoch.ProcessId) with { LoadEpoch = epoch } };
+            var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+            try
+            {
+                await runtime.StartAsync();
+                while (runtime.Current.Connection != ConnectionState.Ready) await Task.Delay(10, timeout.Token);
+                Check((await runtime.SetToggleAsync(FeatureId.Treasure, true)).Success);
+                fixture.Memory.Put(address, 0); // Party.RecalcStatus resets and later recomputes the natural contribution.
+                var sampled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                memory.SnapshotChanged += _ => sampled.TrySetResult();
+                await sampled.Task.WaitAsync(timeout.Token);
+                Check(fixture.Memory.Int(address) == 0 && fixture.Memory.Writes.IsEmpty && runtime.Current.Connection == ConnectionState.Ready);
+                fixture.Memory.Put(address, 7);
+                Check((await runtime.SetToggleAsync(FeatureId.Treasure, false)).Success);
+                Check((await runtime.SetValueAsync(FeatureId.Turn, 8)).Success && fixture.Memory.Int(fixture.Turn + 8) == 8);
+                Check(fixture.Memory.Int(address) == 7 && fixture.Memory.Writes.All(write => write.Address != address));
+                Check(bridge.Writes.SequenceEqual(new[] { "toggle:Treasure:True", "toggle:Treasure:False" }));
+            }
+            finally { Check((await runtime.TryCloseAsync()).Success); }
+        });
         await test("unified memory faults allow active component cancellation but never enable or edit", async () =>
         {
             var memory = new Fixture { Current = Snapshot(42, ConnectionState.Error, false) };

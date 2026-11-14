@@ -186,12 +186,6 @@ public sealed class R10DataEngine
             case FeatureId.War:
                 uint campaignOwner = ValidateFields(graph, CampaignTable, [0xBC, 0xC0, 0xC4, 0xC8], 0, 3);
                 WriteFields(graph, CampaignTable, [0xBC, 0xC0, 0xC4, 0xC8], [3, 3, 3, 3], campaignOwner, contextValid); break;
-            case FeatureId.Treasure:
-                // Party.m_status -> PartyStatus.m_status -> CommonStatus.m_PerFindTreasure.
-                uint treasure = ResolveType(graph, PartyTable, 0, 1);
-                CheckRange(ReadInt(treasure, 0x34), 0, 1000, "宝箱发现加成");
-                WriteSingle(Add(treasure, 0x34), 100, Guard(graph,
-                    () => ResolveType(graph, PartyTable, 0, 1) == treasure), contextValid); break;
             case FeatureId.Hp:
                 RequireBattle();
                 uint party = ResolveType(graph, PartyTable), maximumAddress = ResolveType(graph, PartyTable, 0);

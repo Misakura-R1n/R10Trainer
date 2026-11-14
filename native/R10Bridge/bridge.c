@@ -10,8 +10,10 @@
 #define CARD_CP932 2048
 #define EXTRA_TREASURE_PICK_CAPABILITY 8192
 #define ITEM_STAR_CAPABILITY 16384
+#define TREASURE_FIND_CAPABILITY 32768
 #define MAX_ITEM_STAR 999
 #define EXTRA_TREASURE_PICK 20
+#define TREASURE_FIND 25
 #define CARD_PAGE_SIZE 32
 #define CARD_CATALOG_SIZE (3*CARD_PAGE_SIZE)
 #define CARD_OWNERSHIP_SIZE (8*CARD_PAGE_SIZE)
@@ -63,7 +65,7 @@ typedef struct {
     LONG blockedHits, lastRequestedHp, lastCommandId, lastCommandState;
     LONG pendingId, nextId;
     LONG noDuplicateCards, cardBatch, cardBatchEnabled, filteredCards, fallbackCards;
-    LONG foodRedraw, autoRedistribute, extraTreasurePick;
+    LONG foodRedraw, autoRedistribute, extraTreasurePick, treasureFind;
     LONG resourcesFull, dataReady, food, medal, friendship, unit;
     LONG cardReady, cardContext, cardSceneDepth, cardScenesAtLoad, cardResumePending;
     LONG selector, controlEnabled, battleReady; DWORD battleTick;
@@ -103,6 +105,7 @@ static LONG cardLimit(LONG kind) {
 static int battleToggle(LONG kind) { return kind>=BATTLE_AP_FULL && kind<=BATTLE_UNLIMITED_ACTIONS; }
 static LONG capability(LONG kind) {
     if (kind==EXTRA_TREASURE_PICK) return EXTRA_TREASURE_PICK_CAPABILITY;
+    if (kind==TREASURE_FIND) return TREASURE_FIND_CAPABILITY;
     if (itemStarCommand(kind)) return ITEM_STAR_CAPABILITY;
     return cardCommand(kind) ? CARD_CAPABILITY : kind==BATTLE_HP || battleToggle(kind) ? BATTLE_CAPABILITY :
         kind==1 ? 4 : kind==5 ? 32 : kind==6 ? 64 : kind==7 ? 128 : kind==8 || kind==9 ? 256 : 16;
@@ -114,6 +117,7 @@ static LONG featureCommand(const char *name) {
     if (equal(name,"repeat_actions")) return BATTLE_REPEAT;
     if (equal(name,"unlimited_actions")) return BATTLE_UNLIMITED_ACTIONS;
     if (equal(name,"extra_treasure_pick")) return EXTRA_TREASURE_PICK;
+    if (equal(name,"treasure_find")) return TREASURE_FIND;
     return equal(name,"resources_full") ? 9 : equal(name,"no_duplicate_cards") ? 5 :
         equal(name,"food_redraw") ? 6 : equal(name,"auto_redistribute") ? 7 : equal(name,"hp_guard") ? 1 : 0;
 }
@@ -307,6 +311,7 @@ static void respond(const char *input, char *out) {
     p=put(p,snapshot.foodRedraw ? ",\"foodRedraw\":true" : ",\"foodRedraw\":false");
     p=put(p,snapshot.autoRedistribute ? ",\"autoRedistribute\":true" : ",\"autoRedistribute\":false");
     p=put(p,snapshot.extraTreasurePick ? ",\"extraTreasurePick\":true" : ",\"extraTreasurePick\":false");
+    p=put(p,snapshot.treasureFind ? ",\"treasureFind\":true" : ",\"treasureFind\":false");
     p=put(p,snapshot.resourcesFull ? ",\"resourcesFull\":true" : ",\"resourcesFull\":false");
     p=put(p,snapshot.dataReady ? ",\"dataReady\":true" : ",\"dataReady\":false");
     p=field(p,",\"cardContext\":",snapshot.cardReady ? snapshot.cardContext : 0);
@@ -434,6 +439,7 @@ int __cdecl Tick(int marker,int a,int b) {
         else if (c->kind==6) { state.foodRedraw=c->enabled; c->state=2; }
         else if (c->kind==7) { state.autoRedistribute=c->enabled; c->state=2; }
         else if (c->kind==EXTRA_TREASURE_PICK) { state.extraTreasurePick=c->enabled; c->state=2; }
+        else if (c->kind==TREASURE_FIND) { state.treasureFind=c->enabled; c->state=2; }
         else if (c->kind==9 && !c->enabled) { state.resourcesFull=0; c->state=2; }
         else if (c->kind==1 && state.scriptVersion==1 && (state.capabilities & 4)) { state.hpGuard=c->enabled; c->state=2; }
         else if (battleToggle(c->kind)) {
@@ -543,7 +549,7 @@ int __cdecl Feature(int kind,int a,int b) {
     EnterCriticalSection(&gate);
     int result=state.phase==1 && state.scriptVersion==1 && (state.capabilities & capability(kind)) &&
         ((kind==6 && state.foodRedraw) || (kind==7 && state.autoRedistribute) ||
-         (kind==EXTRA_TREASURE_PICK && state.extraTreasurePick));
+         (kind==EXTRA_TREASURE_PICK && state.extraTreasurePick) || (kind==TREASURE_FIND && state.treasureFind));
     LeaveCriticalSection(&gate); return result;
 }
 

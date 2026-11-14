@@ -6,6 +6,7 @@ import unittest
 import zlib
 import build_instrumented_ain as builder
 from ain_profiles import LAYOUTS, VERSION_BY_SOURCE
+from feature_ain import TREASURE_FIND, TREASURE_FIND_CAPABILITY
 
 
 class FeatureTests(unittest.TestCase):
@@ -24,7 +25,7 @@ class FeatureTests(unittest.TestCase):
             if pc in ends:
                 return pc,stack,calls
             op=struct.unpack_from('<H',code,pc)[0];pc+=2
-            n={0:1,0x01:0,0x02:0,0x09:0,0x18:0,0x19:0,0x2C:1,0x2D:1,0x5A:3,0x5B:0,0xF4:2}[op]
+            n={0:1,0x01:0,0x02:0,0x09:0,0x18:0,0x19:0,0x2C:1,0x2D:1,0x5A:3,0x5B:0,0x5C:1,0xF4:2}[op]
             args=struct.unpack_from('<'+'i'*n,code,pc);pc+=4*n
             if op==0:stack.append(args[0])
             elif op==0x01: stack.pop()
@@ -47,6 +48,12 @@ class FeatureTests(unittest.TestCase):
                 b,a,kind=stack.pop(),stack.pop(),stack.pop()
                 self.assertEqual((a,b),(0,0));calls.append(kind);stack.append(enabled)
             elif op==0x5B: stack.append('selector')
+            elif op==0x5C:
+                self.assertEqual(args,(0,))
+                self.assertEqual(stack.pop(),0x65A3)
+                self.assertEqual(stack.pop(),'status')
+                calls.append('natural-treasure')
+                stack.append(members['treasure'])
             elif op==0xF4:
                 self.assertEqual(args[0],0x435);calls.append('delegate')
                 if delegate_done:pc=args[1]
@@ -103,6 +110,35 @@ class FeatureTests(unittest.TestCase):
                         self.assertEqual(members, {2: 3 if effective else 2})
         if not checked:
             self.skipTest('No input with the original treasure pick bonus')
+
+    def test_treasure_find_uses_current_base_without_mutating_status_in_all_profiles(self):
+        # Recalculation may replace the natural contribution between rewards. A
+        # toggle affects only the consumed value and must never become save data.
+        paths = list(dict.fromkeys([SOURCE, *COMPATIBILITY_SOURCES]))
+        for path in paths:
+            raw = path.read_bytes()
+            version = VERSION_BY_SOURCE[builder.sha(raw)]
+            layout = LAYOUTS[version['id']]
+            original = zlib.decompress(raw[16:])
+            original_code = original[16:16 + struct.unpack_from('<I', original, 12)[0]]
+            pc = layout.relocate(0x3B8448)
+            getter = layout.relocate(0x4009EC)
+            for profile in ('full', 'controls'):
+                generated, report, _ = builder.build(raw, profile)
+                self.assertTrue(report['capabilities'] & TREASURE_FIND_CAPABILITY)
+                code = zlib.decompress(generated[16:])[16:16 + report['newCodeLength']]
+                self.assertEqual(code[getter:getter+26], original_code[getter:getter+26],
+                                 'Shared getter must retain its natural aggregation/read/save behavior')
+                members = {}
+                for enabled, base in ((False, 22), (True, 22), (True, 0), (True, 150), (False, 7)):
+                    with self.subTest(version=version['id'], profile=profile, enabled=enabled, base=base):
+                        members['treasure'] = base
+                        result = self.run_site(pc, 12, enabled, code=code,
+                            stack=['caller-context', 'reward-bonus', 5, 'status'], members=members)
+                        self.assertEqual(result, (pc + 12,
+                            ['caller-context', 'reward-bonus', 5, 100 if enabled else base],
+                            ['natural-treasure', TREASURE_FIND]))
+                        self.assertEqual(members, {'treasure': base})
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--source',type=Path,required=True)
