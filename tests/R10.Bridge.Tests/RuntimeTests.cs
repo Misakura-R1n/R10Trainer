@@ -6,6 +6,54 @@ static class RuntimeTests
 {
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("component cancellation queued behind polling retains its original session", async () =>
+        {
+            foreach (bool unified in new[] { false, true })
+            foreach (bool restart in new[] { false, true })
+            {
+                var client = new RuntimeFixture { State = Ready() with { HpGuard = true } };
+                var bridge = new BridgeTrainerRuntime(client);
+                ITrainerRuntime runtime = unified
+                    ? new UnifiedTrainerRuntime(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "R10-cancellation-fixture")),
+                        _ => (new FaultedMemoryFixture(), bridge)) : bridge;
+                var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource<BridgeState>(TaskCreationOptions.RunContinuationsAsynchronously);
+                bridge.SnapshotChanged += snapshot =>
+                {
+                    if (snapshot.LoadEpoch is { Ready: true }) observed.TrySetResult();
+                };
+                try
+                {
+                    await runtime.StartAsync();
+                    await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    int blocked = 0;
+                    client.Read = () =>
+                    {
+                        if (Interlocked.Exchange(ref blocked, 1) != 0) return Task.FromResult(client.State);
+                        entered.TrySetResult();
+                        return release.Task;
+                    };
+                    await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    var pending = runtime.SetToggleAsync(FeatureId.Hp, false);
+                    Check(!pending.IsCompleted);
+                    client.State = client.State with { Session = restart ? "42:restarted" : client.State.Session, LoadGeneration = 4 };
+                    release.SetResult(client.State);
+                    Check((await pending.WaitAsync(TimeSpan.FromSeconds(5))).Success == !restart);
+                    Check(client.Writes.Count == (restart ? 0 : 1) && client.State.HpGuard == restart);
+                    if (restart)
+                    {
+                        Check((await runtime.SetToggleAsync(FeatureId.Hp, false)).Success);
+                        Check(client.Writes.SequenceEqual(new[] { false }) && !client.State.HpGuard);
+                    }
+                }
+                finally
+                {
+                    release.TrySetResult(client.State);
+                    Check((await runtime.TryCloseAsync()).Success);
+                }
+            }
+        });
         await test("confirmed value checks original authority after asynchronous state read", async () =>
         {
             var expected=new GameLoadEpoch(42,"42:123",3,true);
@@ -234,6 +282,17 @@ static class RuntimeTests
     private static BridgeState Ready() => new(42, 9, 10, 10, 3, 1, false, 0, "none", null, null, null,
         HeartbeatAgeMs: 0, BlockedHits: 0, ScriptVersion: 1, Capabilities: 15) { Session = "42:123" };
     private static void Check(bool condition) { if (!condition) throw new InvalidOperationException("Runtime assertion failed"); }
+
+    private sealed class FaultedMemoryFixture : ITrainerRuntime
+    {
+        public TrainerSnapshot Current { get; } = TrainerSnapshot.Empty with { ProcessId = 42, Connection = ConnectionState.Error };
+        public event Action<TrainerSnapshot>? SnapshotChanged { add { } remove { } }
+        public Task StartAsync() => Task.CompletedTask;
+        public Task<OperationResult> TryCloseAsync() => Task.FromResult(OperationResult.Ok);
+        public Task<OperationResult> SetValueAsync(FeatureId id, decimal value) => throw new InvalidOperationException("Memory writes must remain blocked.");
+        public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) => throw new InvalidOperationException("Component cancellation must use the bridge.");
+        public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled) => throw new InvalidOperationException("Memory writes must remain blocked.");
+    }
 
     private sealed class RuntimeFixture : IBridgeClient
     {

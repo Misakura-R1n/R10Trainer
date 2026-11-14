@@ -9,6 +9,62 @@ static class UnifiedRuntimeTests
     private static readonly string DirectoryB = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "R10-unified-fixture-b"));
     public static async Task Run(Func<string, Func<Task>, Task> test)
     {
+        await test("unified memory faults allow active component cancellation but never enable or edit", async () =>
+        {
+            var memory = new Fixture { Current = Snapshot(42, ConnectionState.Error, false) };
+            var state = Snapshot() with { LoadEpoch = new(42, "fixture:original", 3, true) };
+            var features = state.Features.ToDictionary(item => item.Key, item => item.Value);
+            foreach (var id in BridgeTrainerRuntime.ComponentFeatures.Keys)
+                features[id] = features[id] with { Requested = true, Active = true, CanEdit = false };
+            var bridge = new Fixture { Current = state with { Features = features } };
+            var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
+            foreach (var id in BridgeTrainerRuntime.ComponentFeatures.Keys)
+            {
+                Check(runtime.Current.Features[id].Requested && !runtime.Current.Features[id].CanEdit);
+                Check(!(await runtime.SetToggleAsync(id, true)).Success);
+                Check((await runtime.SetToggleAsync(id, false)).Success);
+            }
+            Check(!(await runtime.SetValueAsync(FeatureId.Food, 3)).Success && memory.Writes.Count == 0);
+            Check(bridge.Writes.Count == BridgeTrainerRuntime.ComponentFeatures.Count && bridge.Writes.All(write => write.EndsWith(":False")));
+            Check((await runtime.TryCloseAsync()).Success);
+        });
+        await test("unified active cancellation still rejects unavailable or mismatched bridges", async () =>
+        {
+            foreach (var state in new[] { Snapshot(99), Snapshot(42, ConnectionState.Error), Snapshot(42, ConnectionState.Loading) })
+            {
+                var features = state.Features.ToDictionary(item => item.Key, item => item.Value);
+                features[FeatureId.Hp] = features[FeatureId.Hp] with { Requested = true };
+                var memory = new Fixture { Current = Snapshot(42, ConnectionState.Error, false) };
+                var bridge = new Fixture { Current = state with { Features = features } };
+                var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (memory, bridge));
+                Check(!(await runtime.SetToggleAsync(FeatureId.Hp, false)).Success && bridge.Writes.Count == 0);
+                Check((await runtime.TryCloseAsync()).Success);
+            }
+        });
+        await test("unified queued cancellation cannot reach a replacement bridge session", async () =>
+        {
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<OperationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var state = Snapshot() with { LoadEpoch = new(42, "fixture:original", 3, true) };
+            var bridge = new Fixture { Current = state, Toggle = () => { entered.TrySetResult(); return release.Task; } };
+            var runtime = new UnifiedTrainerRuntime(DirectoryA, _ => (new Fixture(), bridge));
+            try
+            {
+                var blocking = runtime.SetToggleAsync(FeatureId.Hp, true);
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var cancel = runtime.SetToggleAsync(FeatureId.Hp, false);
+                Check(!cancel.IsCompleted);
+                bridge.Publish(state with { LoadEpoch = new(42, "fixture:replacement", 1, true) });
+                release.SetResult(OperationResult.Ok);
+                Check((await blocking).Success && !(await cancel).Success);
+                Check(bridge.Writes.SequenceEqual(new[] { "toggle:Hp:True" }));
+            }
+            finally
+            {
+                release.TrySetResult(OperationResult.Ok);
+                Check((await runtime.TryCloseAsync()).Success);
+            }
+        });
         await test("unified battle edits use the bridge and respect enemy HP overrides", async () =>
         {
             var battle = new BattleEditContext(new(42, "fixture:original", 3, true), 7);

@@ -112,7 +112,9 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
         return () => memory.SetLockAsync(id, true, contextValid);
     }, bindLoad: enabled);
     public Task<OperationResult> SetToggleAsync(FeatureId id, bool enabled) =>
-        ExecuteAsync(id, true, (runtime, _) => () => runtime.SetToggleAsync(id, enabled));
+        ExecuteAsync(id, true, (runtime, bridge) => runtime is BridgeTrainerRuntime component
+            ? () => component.SetToggleForSessionAsync(id, enabled, bridge.LoadEpoch?.Session)
+            : () => runtime.SetToggleAsync(id, enabled), disableComponent: !enabled);
 
     private static Func<Task<OperationResult>> PrepareValue(ITrainerRuntime runtime, TrainerSnapshot bridge, FeatureId id, decimal value)
     {
@@ -145,7 +147,7 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
     }
 
     private async Task<OperationResult> ExecuteAsync(FeatureId id, bool toggle,
-        Func<ITrainerRuntime, TrainerSnapshot, Func<Task<OperationResult>>> prepare, bool bindLoad = false)
+        Func<ITrainerRuntime, TrainerSnapshot, Func<Task<OperationResult>>> prepare, bool bindLoad = false, bool disableComponent = false)
     {
         if (Volatile.Read(ref _transitions) != 0) return OperationResult.Fail("正在切换游戏或恢复修改，请稍后再操作。");
         Pair? pair;
@@ -176,7 +178,15 @@ public sealed class UnifiedTrainerRuntime : ITrainerRuntime, ICardManagementRunt
             {
                 if (toggle != componentToggle) return OperationResult.Fail("此组件功能不支持该操作。");
                 if (id == FeatureId.EnemyHp && EnemyHpOverridden(memory)) return OperationResult.Fail("请先关闭敌人濒死或直死。");
-                if (!ComponentReady(memory, bridge) || bridge.Features.GetValueOrDefault(id)?.CanEdit != true) return OperationResult.Fail("组件功能尚未就绪，请安装新版组件并启动所选游戏。");
+                if (disableComponent && (submittedBridge.ProcessId != bridge.ProcessId || submittedBridge.LoadEpoch?.Session != bridge.LoadEpoch?.Session))
+                    return OperationResult.Fail("游戏会话已变化，请重新确认后操作。");
+                // Turning off an active component is recovery, independent of external data-write health.
+                // Retain the selected process/session and a responsive component before delegating cancellation.
+                bool canDisable = disableComponent && componentToggle && bridge.Features.GetValueOrDefault(id)?.Requested == true &&
+                    memory.ProcessId is { } pid && pid == bridge.ProcessId && pid == submittedPid &&
+                    bridge.Connection == ConnectionState.Ready && bridge.LoadEpoch?.Ready != false;
+                if (!canDisable && (!ComponentReady(memory, bridge) || bridge.Features.GetValueOrDefault(id)?.CanEdit != true))
+                    return OperationResult.Fail("组件功能尚未就绪，请安装新版组件并启动所选游戏。");
             }
             return await action().ConfigureAwait(false);
         }

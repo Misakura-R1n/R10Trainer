@@ -154,7 +154,10 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
         state.Session == expected.Epoch.Session && state.Pid == expected.Epoch.ProcessId &&
         state.LoadGeneration == expected.Epoch.Generation;
 
-    public async Task<OperationResult> SetToggleAsync(FeatureId id,bool enabled)
+    public Task<OperationResult> SetToggleAsync(FeatureId id,bool enabled) =>
+        SetToggleForSessionAsync(id, enabled, Current.LoadEpoch?.Session ?? _observed?.Session);
+
+    internal async Task<OperationResult> SetToggleForSessionAsync(FeatureId id, bool enabled, string? expectedSession)
     {
         if (!ComponentFeatures.ContainsKey(id)) return OperationResult.Fail("此功能未接入游戏组件。");
         if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在确认桥接关闭，请稍后再操作。");
@@ -166,6 +169,8 @@ public sealed class BridgeTrainerRuntime : ITrainerRuntime, ICardManagementRunti
             if (_closed) return OperationResult.Fail("连接已关闭。");
             if (Volatile.Read(ref _closeRequests)>0) return OperationResult.Fail("正在确认桥接关闭，请稍后再操作。");
             var state=await _client.GetStateAsync().ConfigureAwait(false);
+            if (expectedSession is not null && state.Session != expectedSession)
+                return OperationResult.Fail("游戏会话已变化，请重新确认后操作。");
             if (_ownedSession is not null && _ownedSession!=state.Session) { _owned.Clear(); _ownedSession=null; previouslyOwned=false; previousSession=null; }
             if (!CanWrite(state, id) || (id==FeatureId.Resources && enabled && !CanWriteData(state))) return OperationResult.Fail("游戏组件尚未就绪，或当前版本不支持此功能。");
             if (enabled) { _owned.Add(id); _ownedSession=state.Session; }
