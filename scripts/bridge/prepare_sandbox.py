@@ -18,6 +18,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = ROOT / "artifacts"
+# Match the legacy package name and build.ps1's versioned player directories.
+TRAINER_PACKAGE_NAME = re.compile(r"R10Trainer-(?:v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?-)?win-x86", re.IGNORECASE)
 CORE_SHA = {
     "Rance10.ain": "7ED22B2854DCB93B6E447198E7CB682CD05B90CF6AB3226091D80003D52DD48A",
     "Rance10.exe": "39A508C05B13AFC5427F0B722FCE5C4EDECED126587E037D585CF0E70D279297",
@@ -91,9 +93,10 @@ def prepare(source: Path, target: Path, save_root: Path, game_name: str,
     for path in (source, target, save_root, bridge_directory, bridge_dll):
         reject_reparse(path.absolute())
     source, target, save_root = source.resolve(), target.resolve(), save_root.resolve()
-    require(target.is_relative_to(ARTIFACTS.resolve()) and target != ARTIFACTS.resolve(),
+    artifacts = ARTIFACTS.resolve()
+    require(target.is_relative_to(artifacts) and target != artifacts,
             "Target must be a new subdirectory of this repository's artifacts")
-    require(not target.is_relative_to((ARTIFACTS / "R10Trainer-win-x86").resolve()),
+    require(not any(TRAINER_PACKAGE_NAME.fullmatch(part) for part in target.relative_to(artifacts).parts),
             "A game copy must never be prepared inside the trainer package")
     require(not target.exists(), f"Target already exists; choose a new directory: {target}")
     save_game = save_root / game_name

@@ -99,9 +99,30 @@ class SandboxTests(unittest.TestCase):
         self.assertFalse((nested_source / "nested").exists())
 
     def test_game_cannot_be_copied_into_trainer_package(self):
-        with self.assertRaisesRegex(ValueError, "trainer package"):
-            self.prepare(target=self.artifacts / "R10Trainer-win-x86/game")
-        self.assertFalse((self.artifacts / "R10Trainer-win-x86").exists())
+        package_names = ("R10Trainer-win-x86", "r10trainer-WIN-X86", "R10Trainer-v0.9.5-win-x86",
+                         "R10Trainer-v12.34.56-preview.1-win-x86", "r10TRAINER-V0.9.6-RC.2-WIN-x86")
+        for name in package_names:
+            for prefix in (Path(), Path("nested/packages")):
+                package = self.artifacts / prefix / name
+                for target in (package, package / "game", package / "nested/game"):
+                    with self.subTest(target=target), patch.object(Path, "mkdir", side_effect=AssertionError(
+                            "Package targets must be rejected before creating any game or save directory")):
+                        with self.assertRaisesRegex(ValueError, "trainer package"):
+                            self.prepare(target=target)
+                    self.assertFalse(package.exists())
+                    self.assertFalse((self.saves / "R10SandboxTest").exists())
+
+    def test_similar_names_and_nested_sandbox_directories_remain_allowed(self):
+        for index, relative in enumerate(("R10Trainer-v0.9.5-win-x86-test/game",
+                                          "my-R10Trainer-win-x86/game", "nested/game-copy")):
+            target = self.artifacts / relative
+            game_name = f"R10SandboxAllowed{index}"
+            with self.subTest(target=target):
+                result = self.prepare(target=target, game_name=game_name)
+                self.assertEqual(Path(result["target"]), target.resolve())
+                self.assertTrue((target / "Rance10.exe").is_file())
+                self.assertEqual(Path(result["saveTarget"]), self.saves / game_name / "SaveData")
+                self.assertFalse(result["launched"])
 
     def test_mismatched_bridge_manifest_is_rejected(self):
         (self.bridge / "Rance10.ain").write_bytes(b"tampered")
