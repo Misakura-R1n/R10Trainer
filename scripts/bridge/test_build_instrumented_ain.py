@@ -149,20 +149,58 @@ class WrapperVm:
                 elif target == ADD_ITEM_STAR:
                     show_dialog, delta = stack.pop(), stack.pop()
                     self.add_item_star(delta, show_dialog)
-                else:
+                elif target in self.functions:
                     child = self.functions[target]
                     count = len(child["arguments"])
                     child_args = stack[-count:] if count else []
                     if count: del stack[-count:]
                     value = self.run(child, child_args, this)
                     if child["returnType"]: stack.append(value)
+                else:
+                    self.call_original(target, stack)
             elif op == 0x2F:
                 if function["returnType"]:
                     assert len(stack) == 1; return stack.pop()
                 assert not stack; return None
             elif op == 0x7A: stack.append(stack[-1])
+            elif op == 0xFD:
+                target, receiver = stack.pop(), stack.pop()
+                stack.append((receiver, target))
             else: raise AssertionError(f"Unexpected opcode {op:x} at {pc:x}")
         raise AssertionError("Wrapper did not terminate")
+
+    def call_original(self, target, stack):
+        raise AssertionError(f"Unexpected function {target:x}")
+
+
+class ResourceHudVm(WrapperVm):
+    def __init__(self, generated, report, kind):
+        super().__init__(generated, report)
+        self.globals[0x100] = 200
+        self.objects[100] = {0: 500, 1: 501, 2: kind}
+        self.objects[500] = [510, 511, 512]
+        self.pips = [False] * 3
+        self.part_number = 60
+        self.count = 2
+
+    def method(self, obj, function, args):
+        assert not args
+        if obj == 501 and function == 0x733A: return self.part_number
+        if obj == 501 and function == 0x733F: return self.part_number != 0
+        if obj in (510, 511, 512) and function == 0x7339: return self.pips[obj - 510]
+        if obj == 100 and function == 0x58CB: return self.count
+        if obj == 100 and function == 0x58C9:
+            self.pips = [i < self.count for i in range(3)]
+            self.events.append(("draw", self.count))
+            return None
+        raise AssertionError(f"Unexpected HUD method {function:x}")
+
+    def call_original(self, target, stack):
+        callback = stack.pop()
+        if target == 0x1B36: self.events.append(("register", callback))
+        elif target == 0x1B26: self.events.append(("deleted", stack.pop(), callback))
+        elif target == 0x1B37: self.events.append(("unregister", callback))
+        else: super().call_original(target, stack)
 
 
 class CardResumeVm(WrapperVm):
@@ -473,6 +511,36 @@ class FullBuildTests(unittest.TestCase):
                              ("R10Bridge_ResumeCleanup", ("cleanup",))):
             vm = self.vm(); vm.invoke(name)
             self.assertEqual(vm.events, [before, ("tick", 3, 2 if name.endswith("Cleanup") else 1, 0)])
+
+    def test_resource_hud_registers_and_removes_the_same_instance_callback(self):
+        for kind in range(5):
+            vm = ResourceHudVm(self.generated, self.report, kind)
+            callback = (100, vm.by_name["CommonFramePoint@R10BridgeUpdate"]["id"])
+            deleted = (100, vm.by_name["CommonFramePoint@R10BridgeDeleted"]["id"])
+            vm.invoke("CommonFramePoint@R10BridgeInit")
+            if kind == 0:
+                self.assertEqual(vm.events, [("draw", 2)])
+            else:
+                self.assertEqual(vm.events, [("draw", 2), ("register", callback), ("deleted", 60, deleted)])
+                vm.invoke("CommonFramePoint@R10BridgeDeleted", (60,))
+                self.assertEqual(vm.events[-1], ("unregister", callback))
+
+    def test_visible_resource_pips_refresh_in_place_and_skip_missing_owners(self):
+        vm = ResourceHudVm(self.generated, self.report, kind=1)
+        vm.invoke("CommonFramePoint@R10BridgeInit")
+        vm.events.clear()
+        for count in (3, 0, 1):
+            vm.count = count
+            vm.invoke("CommonFramePoint@R10BridgeUpdate", (16, 16))
+            self.assertEqual(vm.pips, [i < count for i in range(3)])
+            vm.invoke("CommonFramePoint@R10BridgeUpdate", (16, 16))
+        vm.count = 3
+        vm.globals[0x100] = -1
+        vm.invoke("CommonFramePoint@R10BridgeUpdate", (16, 16))
+        vm.globals[0x100] = 200
+        vm.part_number = 0
+        vm.invoke("CommonFramePoint@R10BridgeUpdate", (16, 16))
+        self.assertEqual(vm.events, [("draw", 3), ("draw", 0), ("draw", 1)])
 
     def test_resume_failure_keeps_original_error_string_and_continuation(self):
         vm = self.vm(); result = vm.invoke("R10Bridge_ResumeFailureContinuation")

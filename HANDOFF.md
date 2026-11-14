@@ -4,10 +4,11 @@
 
 | 项目 | 位置 |
 |---|---|
-| 源码 | v0.9.6，默认分支 `codex/initial-import`。升级时先恢复旧组件，再安装新版配套的 `full` AIN 和 DLL，随后重启游戏。 |
+| 源码 | 默认分支 `codex/initial-import` 含尚未发布的资源修复。升级时先恢复旧组件，再安装新版配套的 `full` AIN 和 DLL，随后重启游戏。 |
 | 本地玩家包 | `artifacts/R10Trainer-v0.9.6-win-x86.zip`。构建提交和配方指纹见包内 `build-info.json`。 |
 | 共享物品★实机副本 | `artifacts/item-star-game`。游戏已退出，隔离存档路径见 `artifacts/live/item-star/bridge-sandbox.json`。 |
 | 宝箱发现率实机副本 | `artifacts/treasure-find-game`。游戏和修改器已退出，副本已恢复为配套的新版 full AIN 和 DLL。隔离存档路径见副本的 `bridge-sandbox.json`。 |
+| 资源实机副本 | `artifacts/live/resource-hud/game-bugfix`，已恢复为配套的 `full` 组件。游戏和修改器均已退出，隔离存档及文件校验见同目录的 `bridge-sandbox.json` 和上级目录的 `integrity.json`。 |
 | 多版本构建输入 | `artifacts/patch-compatibility-inputs/<版本 ID>/Rance10.ain`。`bugfix` 和 `japanese-original` 目录含各自的 EXE 与 INI |
 | 中文 BugFix 实机清单 | `artifacts/live/drop-dedup/identity.json` 记录隔离存档、组件指纹及源文件校验结果。 |
 
@@ -17,6 +18,8 @@
 
 | 范围 | 本地证据 |
 |---|---|
+| 中文 BugFix 资源栏 | `artifacts/live/resource-hud/observations.jsonl` 记录桥接读数。使用 `full` 组件和修改器，第一部作战任务选择界面原地显示食券与勋章补满后的 3／2，关闭开关后分别改为 1／0。第二部普通隔离档在 `full` 组件下确认冒险页金块 3→1、友情 3→0、再次补满时均恢复 3，勋章也从手动设定的 3 枚清零。关闭修改器后补满开关复位。定向场景借用编制按钮调用原版勋章奖励，实测获奖弹窗在打开期间保持 3 枚，之后显示部队级别上升，部队等级 4→5，自动补回 2 枚。定向 AIN 也用于生成第二部普通读档种子。原档 70 个文件校验一致。 |
+| 资源离线回归 | `artifacts/bridge/resource-hud-ain-regression.log` 检查 HUD 注册、释放、原地刷新与失效对象保护。`artifacts/bridge/resource-hud-build.log` 覆盖资源补充规则、x86 辅助进程、八版离线构建和逐字节恢复。符号链接用例因 Windows 权限不足跳过。 |
 | 故障状态下关闭组件 | `artifacts/bridge/20261114-fix-runtime.log`。模拟验证外部内存连接报错时仍可关闭活动组件，同时拒绝启用、数值写入、失联/异进程组件以及两层排队期间更换的会话。同会话读档后仍可关闭。未启动游戏。 |
 | MCP 取消与隔离路径 | `artifacts/bridge/20261114-fix-managed.log` 覆盖迟到取消后继续 ping、退出清理和正常在途取消。`artifacts/bridge/20261114-fix-sandbox.log` 覆盖旧版、版本化、预发布及嵌套玩家包路径。`artifacts/bridge/20261114-sandbox-alias.log` 验证包目录尚未创建时，尾随句点和空格的别名也会在创建前被拒绝。符号链接用例因 Windows 权限不足跳过。 |
 | 共享物品★ | `artifacts/live/item-star/verification.json` 记录中文 BugFix 隔离实机。设为 ★40 后，魔剑 卡奥斯的 HP / AT 从 0 / 300 变为 1,350 / 4,050，队伍综合 HP / AT 从 2,250 / 2,525 变为 4,950 / 7,625。原档仍为 ★0，新档重载为 ★40，关闭修改器后回读一致。`artifacts/bridge/item-star-build.log` 记录模拟回归、172 项 x86 辅助进程检查及八版离线安装还原。符号链接用例因 Windows 权限不足跳过。 |

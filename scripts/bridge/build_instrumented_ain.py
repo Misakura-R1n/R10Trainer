@@ -460,6 +460,8 @@ def build(raw: bytes, profile: str = "heartbeat") -> tuple[bytes, dict, str]:
         replace_added_target(resume_pump, card_call, "CALLFUNC", card_pump, item_star, "service card and shared item star requests")
         # Keep the previous helpers and saved return PCs stable across upgrades.
         install_treasure_find(add_function, replace_code, instruction, at)
+        from data_ain import install_resource_hud
+        install_resource_hud(add_function, replace_code, instruction, functions)
     extended.extend(instruction("FUNC", 0))
     struct.pack_into("<i", func, functions[0]["addressOffset"], len(extended))
     struct.pack_into("<i", func, 4, len(functions) + len(added_functions))

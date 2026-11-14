@@ -59,7 +59,7 @@ def export(source: bytes, dll: bytes, built: tuple[bytes, dict] | None = None) -
         cursor = edit['offset'] + edit['remove']
     rebuilt.extend(original[cursor:])
     require(bytes(rebuilt) == target, 'Recipe does not reconstruct the generated AIN')
-    require(sum(len(base64.b64decode(e['data'])) for e in edits) <= 18 * 1024, 'Recipe exceeds the authored byte limit')
+    require(sum(len(base64.b64decode(e['data'])) for e in edits) <= 19 * 1024, 'Recipe exceeds the authored byte limit')
     return {'schema': 1, 'sourceSha256': version['sourceSha256'], 'sourcePlainSha256': version['sourcePlainSha256'],
             'targetPlainSha256': version['targetPlainSha256'], 'sourcePlainLength': len(original), 'targetPlainLength': len(target),
             'exeSha256': version['exeSha256'],

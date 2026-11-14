@@ -27,8 +27,10 @@ class DataVm:
             elif op==4: stack.append('globals')
             elif op==2:
                 index,page=stack.pop(),stack.pop(); assert page=='globals'; stack.append(self.globals[index])
-            elif op in (0x18,0x15):
-                right,left=stack.pop(),stack.pop(); stack.append(int(left==right if op==0x18 else left<=right))
+            elif op in (builder.OP["EQUALE"], builder.OP["LTE"], builder.OP["LT"]):
+                right, left = stack.pop(), stack.pop()
+                compare = {builder.OP["EQUALE"]: int.__eq__, builder.OP["LTE"]: int.__le__, builder.OP["LT"]: int.__lt__}
+                stack.append(int(compare[op](left, right)))
             elif op in (0x2D,0x2E):
                 if bool(stack.pop())==(op==0x2E): self.pc=args[0]
             elif op==0x2C: self.pc=args[0]
@@ -93,11 +95,28 @@ class DataTests(unittest.TestCase):
             vm=self.vm(command=1,value=3,full=True,**kw).run()
             self.assertEqual(vm.writes,[]); self.assertEqual(vm.ack,0); self.assertFalse(vm.data_ready)
 
-    def test_full_normalizes_only_changed_resources_and_never_unit(self):
-        vm=self.vm(command=6).run()
-        self.assertEqual(vm.values,[3,3,3,50]); self.assertEqual(vm.ack,1)
-        vm.pc=self.entry; vm.writes=[]; vm.run(); self.assertEqual(vm.writes,[])
-        vm.values[1]=1; vm.pc=self.entry; vm.run(); self.assertEqual(vm.writes,[(SETTERS[1],3)])
+    def test_full_refills_only_missing_resources_and_never_unit(self):
+        vm = self.vm(command=6)
+        vm.values[1] = 0
+        vm.run()
+        self.assertEqual(vm.values, [3, 2, 3, 50])
+        self.assertEqual(vm.ack, 1)
+        vm.pc = self.entry
+        vm.writes.clear()
+        vm.run()
+        self.assertEqual(vm.writes, [])
+
+    def test_full_leaves_the_third_medal_for_the_game_to_convert(self):
+        vm = self.vm(full=True)
+        vm.values = [3, 3, 3, 50]
+        vm.run()
+        self.assertEqual(vm.writes, [])
+        self.assertEqual(vm.sample[1], 3)
+        vm.values[1] = 0  # AddHonor consumes the third medal after its dialog.
+        vm.pc = self.entry
+        vm.run()
+        self.assertEqual(vm.writes, [(SETTERS[1], 2)])
+        self.assertEqual(vm.sample[1], 2)
 
     def test_disabled_full_has_no_writes_and_rejects_manual_when_enabled(self):
         self.assertEqual(self.vm().run().writes,[])

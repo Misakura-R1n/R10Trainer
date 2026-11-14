@@ -51,7 +51,11 @@ public sealed class SimulationRuntime : ITrainerRuntime
             _features[id] = _features[id] with { Value = _features[id].Maximum };
         if (id == FeatureId.Resources)
             foreach (var counter in new[] { FeatureId.Food, FeatureId.Medal, FeatureId.Friendship })
-                _features[counter] = _features[counter] with { Value = enabled ? 3 : _features[counter].Value, CanEdit = !enabled };
+            {
+                var item = _features[counter];
+                var target = counter == FeatureId.Medal ? 2 : 3;
+                _features[counter] = item with { Value = enabled ? Math.Max(target, item.Value.GetValueOrDefault()) : item.Value, CanEdit = !enabled };
+            }
         Publish(); return Task.FromResult(OperationResult.Ok);
     }
     public Task<OperationResult> SetLockAsync(FeatureId id, bool enabled)
